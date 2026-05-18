@@ -1,8 +1,10 @@
+# src/middleware/tenant.py
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.types import ASGIApp
 import hmac as hmac_lib
 import hashlib
 import time
-import json
-from fastapi import Request
 from fastapi.responses import JSONResponse
 from src.core.config import settings
 from src.db.session import DatabasePool
@@ -38,25 +40,13 @@ async def verify_hmac_middleware(request: Request, call_next):
             "error": {"code": "INVALID_TIMESTAMP"}
         })
 
-    body = await request.body()
-    body_str = body.decode()
+    # Đọc body 1 lần duy nhất
+    body_bytes = await request.body()
+    body_str = body_bytes.decode()
 
-    # DEBUG
-    import structlog
-    logger = structlog.get_logger()
-    logger.info("hmac_debug",
-        secret=repr(settings.HMAC_SECRET),
-        input_str=repr(f"{timestamp}{body_str}"),
-        expected=hmac_lib.new(
-            settings.HMAC_SECRET.encode(),
-            f"{timestamp}{body_str}".encode(),
-            hashlib.sha256
-        ).hexdigest(),
-        received=repr(signature)
-    )
     expected = hmac_lib.new(
         settings.HMAC_SECRET.encode(),
-        f"{timestamp}{body.decode()}".encode(),
+        f"{timestamp}{body_str}".encode(),
         hashlib.sha256
     ).hexdigest()
 
@@ -77,6 +67,12 @@ async def verify_hmac_middleware(request: Request, call_next):
     request.state.domain       = domain
     request.state.request_id   = request_id
     request.state.tenant       = dict(tenant)
+
+    # Fix: cache lại body để FastAPI đọc được sau
+    async def receive():
+        return {"type": "http.request", "body": body_bytes}
+
+    request._receive = receive
 
     return await call_next(request)
 
