@@ -3,8 +3,7 @@ from fastapi import FastAPI
 from src.core.config import settings
 from src.db.session import DatabasePool
 from src.llm.registry import LLMRegistry
-from src.api.chat import router as chat_router
-from src.api.providers import router as providers_router
+from src.middleware.tenant import verify_hmac_middleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -19,8 +18,7 @@ app = FastAPI(
     docs_url="/docs" if settings.APP_ENV != "production" else None
 )
 
-app.include_router(chat_router)
-app.include_router(providers_router)
+app.middleware("http")(verify_hmac_middleware)
 
 @app.get("/health")
 async def health():

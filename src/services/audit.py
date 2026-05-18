@@ -1,0 +1,20 @@
+from src.db.session import DatabasePool
+import structlog
+
+logger = structlog.get_logger()
+
+async def log_audit_event(event_type: str, company_guid: str = None, details: dict = None):
+    try:
+        async with DatabasePool._pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO ai_service.audit_log
+                  (event_type, company_guid, severity, details)
+                VALUES ($1, $2::uuid, $3, $4::jsonb)
+            """,
+            event_type,
+            company_guid,
+            "WARNING",
+            str(details or {}).replace("'", '"')
+            )
+    except Exception as e:
+        logger.error("audit.log_failed", error=str(e))
