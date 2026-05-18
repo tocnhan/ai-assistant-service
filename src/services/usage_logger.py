@@ -25,8 +25,11 @@ async def log_usage(
         # src/services/usage_logger.py — sửa phần INSERT
         async with DatabasePool._pool.acquire() as conn:
             async with conn.transaction():
+                safe_guid = await conn.fetchval(
+                    "SELECT quote_literal($1::text)", company_guid
+                )
                 await conn.execute(
-                    f"SET LOCAL app.current_tenant = '{company_guid}'"
+                    f"SET LOCAL app.current_tenant = {safe_guid}"
                 )
                 await conn.execute("""
                     INSERT INTO ai_service.llm_usage_log

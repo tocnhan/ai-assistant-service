@@ -4,14 +4,17 @@ from fastapi import FastAPI
 from src.core.config import settings
 from src.db.session import DatabasePool
 from src.llm.registry import LLMRegistry
+from src.cache.redis_client import init_redis, close_redis
 from src.middleware.tenant import verify_hmac_middleware
 from src.api.chat import router as chat_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await DatabasePool.init()
+    await init_redis()
     LLMRegistry.register_all()
     yield
+    await close_redis()
     await DatabasePool.close()
 
 app = FastAPI(
