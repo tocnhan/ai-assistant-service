@@ -18,6 +18,29 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "gpt-4-turbo",
         "gpt-3.5-turbo",
     ],
+    "gemini": [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+    ],
+    "deepseek": [
+        "deepseek-v3-exp",
+        "deepseek-chat-v3.1",
+    ],
+    "groq": [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+    ],
+    "anthropic": [
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-opus-4-5",
+    ],
+    "moonshot": [
+        "kimi-k2",
+        "kimi-k2-thinking",
+    ],
 }
 
 
