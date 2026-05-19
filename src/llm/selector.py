@@ -3,10 +3,10 @@ from src.llm.base import LLMProvider
 
 # Default config theo agent role
 DEFAULT_MODELS = {
-    "classifier": ("groq", "llama-3.1-8b-instant"),    # nhanh, rẻ
-    "executor":   ("gemini", "gemini-2.5-flash"),       # balance
-    "summarizer": ("deepseek", "deepseek-chat"),        # rẻ
-    "premium":    ("anthropic", "claude-sonnet-4-6"),   # quality cao
+    "classifier": ("deepseek", "deepseek-chat"),
+    "executor":   ("deepseek", "deepseek-chat"),
+    "summarizer": ("deepseek", "deepseek-chat"),
+    "premium":    ("anthropic", "claude-sonnet-4-6"),
 }
 
 class ModelSelector:

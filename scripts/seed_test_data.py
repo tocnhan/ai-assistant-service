@@ -13,6 +13,5 @@ async def seed():
         ON CONFLICT DO NOTHING;
     """)
     await conn.close()
-    print("✓ Test tenant seeded")
 
 asyncio.run(seed())
