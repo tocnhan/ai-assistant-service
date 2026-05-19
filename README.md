@@ -1,8 +1,8 @@
 # BE AI Assistant Service
 
-Backend microservice độc lập xử lý toàn bộ logic AI agent cho hệ thống quản lý du lịch.
+Backend microservice độc lập xử lý toàn bộ logic AI agent — từ intent classification, multi-turn conversation, tool calling đến SSE streaming response.
 
-**Multi-LLM Provider · Multi-Tenant · Production-Ready**
+**Multi-LLM Provider · Multi-Tenant · Streaming SSE · Production-Ready**
 
 ---
 
@@ -28,33 +28,35 @@ Backend microservice độc lập xử lý toàn bộ logic AI agent cho hệ th
 BE AI Service là một microservice riêng biệt, **không chia sẻ database với BE chính**. Mọi request đến từ BE Private đã được xác thực user, sau đó BE Private sign request bằng HMAC-SHA256 trước khi gửi sang AI Service.
 
 ```
-FE → BE Private (auth user) → BE AI Service (HMAC verify → LLM → stream response)
+FE → BE Private (auth user) → BE AI Service (HMAC verify → classify → stream response)
 ```
 
-Tính năng chính:
+Tính năng hiện tại (Sprint 1-4):
 
-- **Multi-LLM provider**: Gemini, OpenAI, Anthropic, Groq, Ollama — swap bằng config, không sửa code
+- **Multi-LLM provider**: Gemini, OpenAI, Anthropic, DeepSeek, Groq — swap bằng 1 dòng config, không sửa code
 - **Multi-tenant với RLS**: database-level isolation, fail-closed by default
-- **SSE streaming**: response stream từng token về FE _(Sprint 4)_
-- **Quota management**: hard limit per tenant theo token/cost/request _(Sprint 4)_
-- **Usage tracking**: log mọi LLM call với cost ước tính
-- **Observability**: Langfuse trace, Prometheus metrics, structlog JSON _(Sprint 5)_
+- **SSE streaming**: response stream từng token về FE, time-to-first-token < 1.5s
+- **Intent classifier**: tự động phân loại `general_chat`, `search_knowledge`, `api_action`, `summarize`
+- **Multi-turn memory**: Redis sliding window 10 turn, TTL 24h per conversation
+- **Tool system**: ToolRegistry, SearchTool, HttpApiCallTool — plugin architecture
+- **Usage tracking**: log mọi LLM call với cost ước tính per tenant
+- **Domain whitelist**: chống SSRF, kiểm tra allowed_domains per tenant
 
 ---
 
 ## Tech Stack
 
-| Thành phần        | Công nghệ                        |
-| ----------------- | -------------------------------- |
-| Language          | Python 3.11+                     |
-| Web framework     | FastAPI                          |
-| Agent framework   | Pydantic AI                      |
-| Database          | PostgreSQL 15 + TimescaleDB      |
-| Cache / Memory    | Redis 7                          |
-| Migration         | Alembic                          |
-| Package manager   | uv                               |
-| Container         | Docker + Docker Compose          |
-| LLM Tracing       | Langfuse (self-hosted, Sprint 5) |
+| Thành phần      | Công nghệ                         |
+|-----------------|-----------------------------------|
+| Language        | Python 3.11+                      |
+| Web framework   | FastAPI                           |
+| Agent framework | Pydantic AI                       |
+| Database        | PostgreSQL 15 + TimescaleDB       |
+| Cache / Memory  | Redis 7                           |
+| Migration       | Alembic                           |
+| Package manager | uv                                |
+| Container       | Docker + Docker Compose           |
+| LLM Tracing     | Langfuse (self-hosted, Sprint 8)  |
 
 ---
 
@@ -63,57 +65,71 @@ Tính năng chính:
 ```
 ai-assistant-service/
 ├── src/
-│   ├── main.py                     # FastAPI app entry, lifespan, middleware
+│   ├── main.py                      # FastAPI app entry, lifespan, middleware
+│   ├── agents/
+│   │   ├── base.py                  # BaseAgent, run(), stream()
+│   │   ├── classifier.py            # ClassifierAgent — intent classification
+│   │   ├── orchestrator.py          # Orchestrator — classify → route → stream
+│   │   └── registry.py              # AgentRegistry — map intent → executor
 │   ├── api/
-│   │   ├── chat.py                 # POST /chat
-│   │   ├── providers.py            # GET /providers
-│   │   └── health.py               # GET /health, /ready
-│   ├── agents/                     # Sprint 3
-│   │   ├── orchestrator.py
-│   │   └── classifier.py
+│   │   ├── chat.py                  # POST /chat, POST /chat/stream (SSE)
+│   │   └── providers.py             # GET /providers
 │   ├── cache/
-│   │   └── redis_client.py         # Redis connection
+│   │   └── redis_client.py          # Redis connection + get_redis()
 │   ├── core/
-│   │   └── config.py               # Settings từ .env (pydantic-settings)
+│   │   └── config.py                # Settings từ .env (pydantic-settings)
 │   ├── db/
-│   │   └── session.py              # asyncpg pool + RLS tenant context
+│   │   └── session.py               # asyncpg pool + RLS tenant context
 │   ├── llm/
-│   │   ├── base.py                 # LLMProvider abstract, dataclasses
-│   │   ├── registry.py             # Provider registry
-│   │   ├── pricing.py              # Cost calculator
+│   │   ├── base.py                  # LLMProvider abstract, dataclasses
+│   │   ├── registry.py              # Provider registry
+│   │   ├── selector.py              # ModelSelector — role-based provider selection
+│   │   ├── pricing.py               # Cost calculator
 │   │   └── providers/
-│   │       ├── gemini.py
-│   │       └── openai_provider.py
-│   ├── memory/                     # Sprint 3
-│   │   └── conversation.py
+│   │       ├── gemini.py            # Gemini (generate + stream)
+│   │       ├── openai_provider.py   # OpenAI (generate + stream)
+│   │       ├── anthropic_provider.py# Anthropic (generate + stream)
+│   │       ├── deepseek_provider.py # DeepSeek (inherit OpenAI)
+│   │       └── groq_provider.py     # Groq (inherit OpenAI)
+│   ├── memory/
+│   │   └── conversation.py          # Redis sliding window memory
 │   ├── middleware/
-│   │   └── tenant.py               # HMAC verify + tenant context
+│   │   └── tenant.py                # Pure ASGI HMACMiddleware
 │   ├── services/
-│   │   ├── audit.py                # Security event logger
-│   │   └── usage_logger.py         # Async LLM usage logger
-│   └── tools/                      # Sprint 3
-│       ├── search_tool.py
-│       ├── booking_tool.py
-│       └── calendar_tool.py
+│   │   ├── audit.py                 # Security event logger
+│   │   ├── usage_logger.py          # Async LLM usage logger
+│   │   └── qdrant_search.py         # Vector search stub (Sprint 5)
+│   └── tools/
+│       ├── base.py                  # BaseTool, ToolRegistry, whitelist
+│       ├── http_api_call.py         # HttpApiCallTool — gọi external API
+│       └── search_tool.py           # SearchTool — wrap Qdrant search
 ├── tests/
 │   ├── integration/
-│   │   └── test_rls.py             # RLS isolation test — phải pass 100%
-│   ├── unit/                       # Sprint 3+
-│   └── eval/                       # Sprint 3+
+│   │   └── test_rls.py              # RLS isolation test
+│   └── unit/
+│       ├── test_classifier.py       # 6 cases
+│       ├── test_memory.py           # 5 cases
+│       ├── test_tools.py            # 7 cases
+│       ├── test_model_selector.py   # 5 cases
+│       ├── test_hmac_middleware.py  # 4 cases
+│       ├── test_openai_provider.py
+│       ├── test_anthropic_provider.py
+│       └── test_pricing_calc.py
 ├── alembic/
 │   └── versions/
 │       ├── f4e886f1f643_001_initial_schema.py
-│       └── xxxx_002_add_allowed_domains.py
+│       ├── 0689772182af_002_add_allowed_domains.py
+│       └── 8b32f1048493_003_sprint3_schema.py
 ├── scripts/
-│   ├── dev_setup.py                # Seed test data (chạy lần đầu)
-│   ├── seed_pricing.py             # Seed LLM pricing
-│   ├── seed_test_data.py           # Seed test tenant
-│   └── gen_hmac.py                 # Generate HMAC signature để test API
+│   ├── gen_hmac.py                  # Generate HMAC signature để test
+│   ├── seed_pricing.py              # Seed LLM pricing (5 providers)
+│   ├── seed_test_data.py            # Seed test tenant
+│   ├── test_chat.py                 # Multi-turn automated test
+│   └── check_usage.py              # Xem cost + usage từ DB
 ├── docker/
 │   └── docker-compose.yml
 ├── conftest.py
 ├── pyproject.toml
-├── .env.example
 └── README.md
 ```
 
@@ -124,7 +140,7 @@ ai-assistant-service/
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) — package manager
 - Docker Desktop
-- VS Code (khuyến nghị) với extensions: Python, Pylance, Docker, SQLTools, REST Client
+- Ít nhất 1 LLM API key (Gemini free tier đủ để dev)
 
 ---
 
@@ -157,32 +173,17 @@ cp .env.example .env
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-Đợi containers healthy:
+### 4. Chạy migration
 
 ```bash
-docker ps
-# postgres: (healthy), redis: (healthy)
-```
-
-### 4. Tạo DB users và chạy migration
-
-```bash
-# Tạo roles (chỉ cần 1 lần)
-docker exec -it docker-postgres-1 psql -U postgres -d ai_db -c "
-  CREATE ROLE ai_admin LOGIN PASSWORD 'your-password' BYPASSRLS SUPERUSER;
-  CREATE ROLE ai_app   LOGIN PASSWORD 'your-password';
-  GRANT ALL ON DATABASE ai_db TO ai_admin;
-  GRANT ALL ON SCHEMA public TO ai_admin;
-"
-
-# Chạy tất cả migration
 uv run alembic upgrade head
 ```
 
-### 5. Seed data lần đầu
+### 5. Seed pricing data
 
 ```bash
-uv run python scripts/dev_setup.py
+uv run python scripts/seed_pricing.py
+uv run python scripts/seed_test_data.py
 ```
 
 ### 6. Start app
@@ -198,44 +199,43 @@ Mở `http://localhost:8000/docs` để xem Swagger UI.
 ## Chạy dev hàng ngày
 
 ```bash
-# 1. Start Docker (data persist, không cần seed lại)
+# 1. Start Docker
 docker compose -f docker/docker-compose.yml up -d
 
 # 2. Start app
 uv run uvicorn src.main:app --reload
 ```
 
-> **Lưu ý:** Chỉ chạy `dev_setup.py` lại nếu đã chạy `docker compose down -v` (xóa volume).
-
 ---
 
 ## Cấu hình `.env`
-
-Xem file `.env.example` để biết đầy đủ các biến. Các biến bắt buộc phải set:
 
 ```env
 # App
 APP_ENV=development
 LOG_LEVEL=INFO
 
-# Database — bắt buộc, không có default
+# Database
 DATABASE_URL=postgresql+asyncpg://ai_app:your-password@127.0.0.1/ai_db
 DATABASE_ADMIN_URL=postgresql://ai_admin:your-password@127.0.0.1/ai_db
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
 
-# Security — HMAC shared secret với BE Private
-HMAC_SECRET=<generate bằng: openssl rand -hex 32>
+# Security
+HMAC_SECRET=<generate: openssl rand -hex 32>
 
-# LLM Providers — điền ít nhất 1 provider
+# LLM Providers — điền ít nhất 1
 GEMINI_API_KEY=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
+DEEPSEEK_API_KEY=
 GROQ_API_KEY=
-```
 
-> **Không bao giờ commit file `.env`** — đã có trong `.gitignore`.
+# External
+QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=
+```
 
 ---
 
@@ -245,14 +245,14 @@ GROQ_API_KEY=
 
 Mọi request (trừ `/health`, `/ready`, `/docs`) phải có headers:
 
-| Header          | Mô tả                                         |
-| --------------- | --------------------------------------------- |
-| `X-Company-GUID`| UUID của tenant                               |
-| `X-User-GUID`   | UUID của user                                 |
-| `X-Domain`      | Domain của tenant                             |
-| `X-Timestamp`   | Unix timestamp (chống replay, window 5 phút)  |
-| `X-Signature`   | HMAC-SHA256(secret, timestamp + body)         |
-| `X-Request-Id`  | UUID để trace                                 |
+| Header           | Mô tả                                        |
+|------------------|----------------------------------------------|
+| `X-Company-GUID` | UUID của tenant                              |
+| `X-User-GUID`    | UUID của user                                |
+| `X-Domain`       | Domain của tenant (phải có trong allowed_domains) |
+| `X-Timestamp`    | Unix timestamp (window 5 phút)               |
+| `X-Signature`    | HMAC-SHA256(secret, timestamp + body)        |
+| `X-Request-Id`   | UUID để trace                                |
 
 Generate signature để test:
 
@@ -262,54 +262,71 @@ uv run python scripts/gen_hmac.py
 
 ### Endpoints
 
-| Method | Path        | Mô tả                              |
-| ------ | ----------- | ---------------------------------- |
-| `GET`  | `/health`   | Liveness check                     |
-| `GET`  | `/ready`    | Readiness check                    |
-| `GET`  | `/providers`| Danh sách LLM provider đang active |
-| `POST` | `/chat`     | Chat với AI                        |
+| Method | Path           | Mô tả                               |
+|--------|----------------|-------------------------------------|
+| `GET`  | `/health`      | Liveness check                      |
+| `GET`  | `/ready`       | Readiness check                     |
+| `GET`  | `/providers`   | Danh sách LLM provider đang active  |
+| `POST` | `/chat`        | Chat non-streaming (backward compat)|
+| `POST` | `/chat/stream` | Chat SSE streaming                  |
 
 ### POST /chat
 
 Request:
-
 ```json
 {
-  "message": "Booking #1234 hôm nay có gì không?",
-  "conversation_id": "optional-uuid",
-  "intent_hint": "optional-bypass-classifier"
+  "message": "xin chào",
+  "conversation_id": "conv-uuid-optional",
+  "intent_hint": "general_chat"
 }
 ```
 
-Response (Sprint 1-2 — non-streaming):
-
+Response:
 ```json
 {
-  "response": "...",
-  "request_id": "test-001",
-  "company_guid": "550e8400-...",
+  "response": "Xin chào! Tôi có thể giúp gì cho bạn?",
+  "request_id": "req-001",
+  "provider": "gemini",
+  "model": "gemini-2.5-flash",
   "usage": {
-    "total_tokens": 106,
-    "prompt_tokens": 2,
-    "output_tokens": 104,
-    "estimated_cost_usd": 0.0000416
+    "total_tokens": 58,
+    "prompt_tokens": 10,
+    "output_tokens": 48
   }
 }
 ```
 
-> Streaming SSE sẽ được implement ở Sprint 4.
+### POST /chat/stream (SSE)
+
+Response stream — mỗi event là 1 dòng `data: {...}`:
+
+```
+data: {"type": "intent", "intent": "general_chat"}
+data: {"type": "delta", "delta": "Xin"}
+data: {"type": "delta", "delta": " chào!"}
+data: {"type": "done", "request_id": "req-001", "latency_ms": 823, "usage": {...}}
+```
+
+Event types:
+
+| Type    | Mô tả                                    |
+|---------|------------------------------------------|
+| `intent`| Intent đã classify được                  |
+| `delta` | Token mới từ LLM                         |
+| `done`  | Kết thúc, kèm latency + usage            |
+| `error` | Lỗi trong quá trình xử lý               |
 
 ---
 
 ## Test
 
-### Chạy tất cả tests
+### Chạy unit tests
 
 ```bash
-uv run pytest tests/ -v
+uv run pytest tests/unit/ -v
 ```
 
-### RLS isolation test — quan trọng nhất
+### RLS isolation test
 
 ```bash
 uv run pytest tests/integration/test_rls.py -v
@@ -317,55 +334,53 @@ uv run pytest tests/integration/test_rls.py -v
 
 Test này verify tenant B không đọc được data của tenant A. **Phải pass 100% trước khi deploy.**
 
+### Multi-turn conversation test
+
+```bash
+uv run python scripts/test_chat.py
+```
+
+Test 4 message liên tiếp với cùng `conversation_id` — verify memory hoạt động.
+
 ### Test API thủ công
 
 ```bash
-# Bước 1: Generate HMAC signature
+# Bước 1: Sửa body test
+# Windows
+Set-Content -Path scripts/test_body.json -Value '{"message": "xin chao"}' -Encoding ascii
+
+# Bước 2: Generate HMAC
 uv run python scripts/gen_hmac.py
 
-# Bước 2: Gọi API với signature vừa generate
-# Windows
-curl.exe -X POST http://localhost:8000/chat \
+# Bước 3: Gọi stream endpoint
+curl.exe -X POST http://localhost:8000/chat/stream \
   -H "Content-Type: application/json" \
-  -H "X-Company-GUID: 550e8400-e29b-41d4-a716-446655440000" \
-  -H "X-User-GUID: 660e8400-e29b-41d4-a716-446655440001" \
-  -H "X-Domain: https://test.com" \
-  -H "X-Timestamp: <TIMESTAMP>" \
-  -H "X-Signature: <SIGNATURE>" \
-  -H "X-Request-Id: test-001" \
-  -d "@scripts/test_body.json"
+  -H "X-Company-GUID: <guid>" \
+  -H "X-User-GUID: <user-guid>" \
+  -H "X-Domain: <domain>" \
+  -H "X-Timestamp: <timestamp>" \
+  -H "X-Signature: <signature>" \
+  -H "X-Request-Id: req-001" \
+  -d "@scripts/test_body.json" --no-buffer
 ```
 
-### Verify usage log vào DB
+### Xem usage + cost
 
 ```bash
-docker exec -it docker-postgres-1 psql -U postgres -d ai_db -c \
-  "SELECT agent_name, provider, model, total_tokens, estimated_cost_usd, latency_ms
-   FROM ai_service.llm_usage_log
-   ORDER BY created_at DESC
-   LIMIT 5;"
+uv run python scripts/check_usage.py
 ```
 
 ---
 
 ## Kiến trúc bảo mật
 
-### Defense in depth
-
 ```
-Layer 1 (Network)   : HTTPS only, IP whitelist nếu có
-Layer 2 (App)       : HMAC signature, anti-replay timestamp, tenant + domain validation
-Layer 3 (Database)  : Row-Level Security — ai_app không bypass được RLS
-Layer 4 (LLM)       : tenant_id inject từ middleware, không từ LLM output
-Layer 5 (Audit)     : log mọi security event vào audit_log table
+Layer 1 (Network)  : HTTPS only
+Layer 2 (App)      : HMAC-SHA256, anti-replay timestamp (5 phút), domain whitelist
+Layer 3 (Database) : Row-Level Security — ai_app không bypass được RLS
+Layer 4 (LLM)      : tenant_id inject từ middleware, không từ LLM output
+Layer 5 (Audit)    : log mọi security event vào audit_log
 ```
-
-### Multi-tenant isolation
-
-- Mỗi request set `SET LOCAL app.current_tenant = '<uuid>'` trong DB transaction (dùng `quote_literal` để escape an toàn)
-- RLS policy tự động filter tất cả queries — app code không cần `WHERE company_guid`
-- `ai_app` role không có `BYPASSRLS` — không thể tắt RLS dù muốn
-- `allowed_domains` table kiểm tra domain whitelist để chống SSRF
 
 ### HMAC verification
 
@@ -375,66 +390,82 @@ signature = HMAC-SHA256(HMAC_SECRET, f"{timestamp}{request_body}")
 
 - Timestamp window 5 phút — chống replay attack
 - `hmac.compare_digest` — chống timing attack
+- Pure ASGI middleware — compatible với SSE streaming
+
+### Multi-tenant isolation
+
+- RLS policy filter tự động tất cả queries theo `app.current_tenant`
+- `ai_app` role không có `BYPASSRLS`
+- `allowed_domains` table kiểm tra domain whitelist chống SSRF
+
+---
+
+## Multi-Provider Config
+
+Đổi provider mặc định trong `src/llm/selector.py`:
+
+```python
+DEFAULT_MODELS = {
+    "classifier": ("groq", "llama-3.1-8b-instant"),   # nhanh, rẻ
+    "executor":   ("gemini", "gemini-2.5-flash"),      # balance
+    "summarizer": ("deepseek", "deepseek-chat"),       # rẻ
+    "premium":    ("anthropic", "claude-sonnet-4-6"),  # quality cao
+}
+```
+
+Không cần restart — chỉ cần đảm bảo API key của provider đó có trong `.env`.
 
 ---
 
 ## Roadmap
 
-| Sprint                            | Tuần  | Status        |
-| --------------------------------- | ----- | ------------- |
-| Sprint 1 — Foundation             | 1-2   | ✅ Done       |
-| Sprint 2 — Security & LLM Adapter | 3-4   | ✅ Done       |
-| Sprint 3 — Agent Framework        | 5-6   | 🔄 In progress|
-| Sprint 4 — Streaming & Quota      | 7-8   | ⏳ Pending    |
-| Sprint 5 — Admin & Observability  | 9-10  | ⏳ Pending    |
-| Sprint 6 — Polish & Production    | 11-12 | ⏳ Pending    |
-
-### Sprint 3 — đang làm
-
-- [ ] Setup Pydantic AI
-- [ ] Implement Intent Classifier
-- [ ] Implement Agent Orchestrator
-- [ ] Implement Tool layer (Qdrant search, BE Public API)
-- [ ] Conversation memory với Redis
-- [ ] Migrate agent đầu tiên từ n8n
-- [ ] Eval test cho classifier (pass rate ≥ 90%)
+| Sprint                               | Tuần  | Status         |
+|--------------------------------------|-------|----------------|
+| Sprint 1 — Foundation                | 1-2   | ✅ Done        |
+| Sprint 2 — Security & LLM Adapter   | 3-4   | ✅ Done        |
+| Sprint 3 — Tech Debt + 5 Providers  | 5-6   | ✅ Done        |
+| Sprint 4 — Agent Runtime + SSE      | 7-8   | ✅ Done        |
+| Sprint 5 — Industry Pack + Qdrant   | 9-10  | ⏳ Pending     |
+| Sprint 6 — Credit Wallet            | 11-12 | ⏳ Pending     |
+| Sprint 7 — BYOK + Tenant Override   | 13-14 | ⏳ Pending     |
+| Sprint 8 — Observability + Prod     | 15-16 | ⏳ Pending     |
 
 ---
 
 ## Troubleshooting
 
-### App không start — `password authentication failed`
+### HMAC Invalid Signature
 
-```bash
-docker exec -it docker-postgres-1 psql -U postgres -d ai_db -c \
-  "CREATE ROLE ai_app LOGIN PASSWORD 'your-password';"
-uv run alembic upgrade head
+- Timestamp phải trong vòng 5 phút
+- Body phải giống hệt lúc gen — dùng `@scripts/test_body.json`, không dùng inline `-d '{...}'`
+- Chạy lại `uv run python scripts/gen_hmac.py`
+
+### Domain not allowed
+
+Tenant chưa có domain trong `allowed_domains`. Thêm vào DB:
+```python
+# Tạo file fix_domain.py và chạy
+uv run python fix_domain.py
 ```
 
-### App không start — `DATABASE_URL is empty`
+### Provider 503 / rate limit
 
-`DATABASE_URL` không có default, phải set trong `.env`. Chạy `cp .env.example .env` và điền giá trị.
+Đổi provider trong `src/llm/selector.py` → đổi `executor` sang provider khác → restart app.
+
+### Redis connection refused
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+```
 
 ### Data mất sau restart
 
 ```bash
-# Kiểm tra volume còn không
 docker volume ls | grep postgres_data
-
-# Seed lại nếu cần
-uv run python scripts/dev_setup.py
+uv run python scripts/seed_test_data.py
+uv run python scripts/seed_pricing.py
 ```
-
-### HMAC Invalid Signature
-
-- Timestamp phải trong vòng 5 phút kể từ lúc generate
-- Body phải giống hệt nhau — dùng `@scripts/test_body.json`, không dùng inline `-d '{...}'`
-- Chạy lại `uv run python scripts/gen_hmac.py` để generate mới
 
 ### `unrecognized configuration parameter app.current_tenant`
 
-Cần chạy `SET LOCAL` trong transaction trước khi query. Xem `src/db/session.py` — `acquire_with_tenant()`.
-
-### Redis connection refused
-
-Đảm bảo Docker đang chạy: `docker compose -f docker/docker-compose.yml up -d`. Kiểm tra log startup phải có `redis.connected`.
+Cần chạy `SET LOCAL` trong transaction. Xem `src/db/session.py`.
