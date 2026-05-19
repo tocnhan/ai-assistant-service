@@ -68,6 +68,24 @@ async def verify_hmac_middleware(request: Request, call_next):
     request.state.request_id   = request_id
     request.state.tenant       = dict(tenant)
 
+    # Check allowed_domains (chống SSRF)
+    if domain:
+        async with DatabasePool._pool.acquire() as conn:
+            allowed = await conn.fetchval(
+                """SELECT EXISTS(
+                    SELECT 1 FROM ai_service.allowed_domains
+                    WHERE company_guid = $1::uuid
+                    AND domain = $2
+                    AND is_active = TRUE
+                )""",
+                company_guid, domain
+            )
+    if not allowed:
+        await log_audit_event("DOMAIN_NOT_ALLOWED", company_guid)
+        return JSONResponse(status_code=403, content={
+            "error": {"code": "DOMAIN_NOT_ALLOWED", "message": f"Domain '{domain}' không được phép"}
+        })
+
     # Fix: cache lại body để FastAPI đọc được sau
     async def receive():
         return {"type": "http.request", "body": body_bytes}

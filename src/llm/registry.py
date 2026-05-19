@@ -12,6 +12,15 @@ class LLMRegistry:
         if settings.OPENAI_API_KEY:
             from src.llm.providers.openai_provider import OpenAIProvider
             cls._providers["openai"] = OpenAIProvider(settings.OPENAI_API_KEY)
+        if settings.ANTHROPIC_API_KEY:
+            from src.llm.providers.anthropic_provider import AnthropicProvider
+            cls._providers["anthropic"] = AnthropicProvider(settings.ANTHROPIC_API_KEY)
+        if settings.DEEPSEEK_API_KEY:
+            from src.llm.providers.deepseek_provider import DeepSeekProvider
+            cls._providers["deepseek"] = DeepSeekProvider(settings.DEEPSEEK_API_KEY)
+        if settings.GROQ_API_KEY:
+            from src.llm.providers.groq_provider import GroqProvider
+            cls._providers["groq"] = GroqProvider(settings.GROQ_API_KEY)
 
     @classmethod
     def get(cls, provider_name: str) -> LLMProvider:
