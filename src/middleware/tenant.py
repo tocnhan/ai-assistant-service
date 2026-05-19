@@ -69,6 +69,7 @@ async def verify_hmac_middleware(request: Request, call_next):
     request.state.tenant       = dict(tenant)
 
     # Check allowed_domains (chống SSRF)
+    allowed = False          # ← THÊM DÒNG NÀY
     if domain:
         async with DatabasePool._pool.acquire() as conn:
             allowed = await conn.fetchval(

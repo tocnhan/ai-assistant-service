@@ -7,16 +7,25 @@ router = APIRouter(prefix="/providers", tags=["providers"])
 # Default models per provider
 _PROVIDER_MODELS: dict[str, list[str]] = {
     "gemini": [
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
     ],
     "openai": [
         "gpt-4o",
         "gpt-4o-mini",
-        "gpt-4-turbo",
-        "gpt-3.5-turbo",
+    ],
+    "anthropic": [
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5",
+    ],
+    "deepseek": [
+        "deepseek-chat",
+        "deepseek-reasoner",
+    ],
+    "groq": [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
     ],
     "gemini": [
         "gemini-2.0-flash",
