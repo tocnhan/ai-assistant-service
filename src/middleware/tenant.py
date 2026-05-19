@@ -1,99 +1,122 @@
-# src/middleware/tenant.py
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.types import ASGIApp
 import hmac as hmac_lib
 import hashlib
 import time
-from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 from src.core.config import settings
 from src.db.session import DatabasePool
 from src.services.audit import log_audit_event
 
 SKIP_PATHS = {"/health", "/ready", "/docs", "/openapi.json", "/redoc"}
 
-async def verify_hmac_middleware(request: Request, call_next):
-    if request.url.path in SKIP_PATHS:
-        return await call_next(request)
 
-    signature    = request.headers.get("X-Signature")
-    timestamp    = request.headers.get("X-Timestamp")
-    company_guid = request.headers.get("X-Company-GUID")
-    user_guid    = request.headers.get("X-User-GUID")
-    domain       = request.headers.get("X-Domain")
-    request_id   = request.headers.get("X-Request-Id", "")
+class HMACMiddleware:
+    def __init__(self, app: ASGIApp):
+        self.app = app
 
-    if not all([signature, timestamp, company_guid, user_guid, domain]):
-        return JSONResponse(status_code=401, content={
-            "error": {"code": "MISSING_HEADERS", "message": "Required headers missing"}
-        })
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-    try:
-        ts = int(timestamp)
-        if abs(int(time.time()) - ts) > 300:
-            await log_audit_event("TIMESTAMP_EXPIRED", company_guid)
+        request = Request(scope, receive)
+
+        if request.url.path in SKIP_PATHS:
+            await self.app(scope, receive, send)
+            return
+
+        error = await self._verify(request)
+        if error:
+            await error(scope, receive, send)
+            return
+
+        body_bytes = request.scope["_body"]
+        consumed = False
+
+        async def cached_receive():
+            nonlocal consumed
+            if not consumed:
+                consumed = True
+                return {"type": "http.request", "body": body_bytes, "more_body": False}
+            # Sau lần đầu → chờ disconnect
+            return await receive()
+
+        await self.app(scope, cached_receive, send)
+
+    async def _verify(self, request: Request):
+        signature    = request.headers.get("X-Signature")
+        timestamp    = request.headers.get("X-Timestamp")
+        company_guid = request.headers.get("X-Company-GUID")
+        user_guid    = request.headers.get("X-User-GUID")
+        domain       = request.headers.get("X-Domain")
+        request_id   = request.headers.get("X-Request-Id", "")
+
+        if not all([signature, timestamp, company_guid, user_guid, domain]):
             return JSONResponse(status_code=401, content={
-                "error": {"code": "TIMESTAMP_EXPIRED", "message": "Request quá cũ"}
+                "error": {"code": "MISSING_HEADERS", "message": "Required headers missing"}
             })
-    except ValueError:
-        return JSONResponse(status_code=401, content={
-            "error": {"code": "INVALID_TIMESTAMP"}
-        })
 
-    # Đọc body 1 lần duy nhất
-    body_bytes = await request.body()
-    body_str = body_bytes.decode()
+        try:
+            ts = int(timestamp)
+            if abs(int(time.time()) - ts) > 300:
+                await log_audit_event("TIMESTAMP_EXPIRED", company_guid)
+                return JSONResponse(status_code=401, content={
+                    "error": {"code": "TIMESTAMP_EXPIRED", "message": "Request quá cũ"}
+                })
+        except ValueError:
+            return JSONResponse(status_code=401, content={
+                "error": {"code": "INVALID_TIMESTAMP"}
+            })
 
-    expected = hmac_lib.new(
-        settings.HMAC_SECRET.encode(),
-        f"{timestamp}{body_str}".encode(),
-        hashlib.sha256
-    ).hexdigest()
+        body_bytes = await request.body()
+        body_str = body_bytes.decode()
 
-    if not hmac_lib.compare_digest(expected, signature):
-        await log_audit_event("HMAC_FAIL", company_guid)
-        return JSONResponse(status_code=401, content={
-            "error": {"code": "INVALID_SIGNATURE", "message": "HMAC không hợp lệ"}
-        })
+        expected = hmac_lib.new(
+            settings.HMAC_SECRET.encode(),
+            f"{timestamp}{body_str}".encode(),
+            hashlib.sha256
+        ).hexdigest()
 
-    tenant = await _get_tenant(company_guid)
-    if not tenant or tenant["status"] != "active":
-        return JSONResponse(status_code=403, content={
-            "error": {"code": "INVALID_TENANT", "message": "Tenant không tồn tại"}
-        })
+        if not hmac_lib.compare_digest(expected, signature):
+            await log_audit_event("HMAC_FAIL", company_guid)
+            return JSONResponse(status_code=401, content={
+                "error": {"code": "INVALID_SIGNATURE", "message": "HMAC không hợp lệ"}
+            })
 
-    request.state.company_guid = company_guid
-    request.state.user_guid    = user_guid
-    request.state.domain       = domain
-    request.state.request_id   = request_id
-    request.state.tenant       = dict(tenant)
+        tenant = await _get_tenant(company_guid)
+        if not tenant or tenant["status"] != "active":
+            return JSONResponse(status_code=403, content={
+                "error": {"code": "INVALID_TENANT", "message": "Tenant không tồn tại"}
+            })
 
-    # Check allowed_domains (chống SSRF)
-    allowed = False          # ← THÊM DÒNG NÀY
-    if domain:
-        async with DatabasePool._pool.acquire() as conn:
-            allowed = await conn.fetchval(
-                """SELECT EXISTS(
-                    SELECT 1 FROM ai_service.allowed_domains
-                    WHERE company_guid = $1::uuid
-                    AND domain = $2
-                    AND is_active = TRUE
-                )""",
-                company_guid, domain
-            )
-    if not allowed:
-        await log_audit_event("DOMAIN_NOT_ALLOWED", company_guid)
-        return JSONResponse(status_code=403, content={
-            "error": {"code": "DOMAIN_NOT_ALLOWED", "message": f"Domain '{domain}' không được phép"}
-        })
+        allowed = False
+        if domain:
+            async with DatabasePool._pool.acquire() as conn:
+                allowed = await conn.fetchval(
+                    """SELECT EXISTS(
+                        SELECT 1 FROM ai_service.allowed_domains
+                        WHERE company_guid = $1::uuid
+                        AND domain = $2
+                        AND is_active = TRUE
+                    )""",
+                    company_guid, domain
+                )
+        if not allowed:
+            await log_audit_event("DOMAIN_NOT_ALLOWED", company_guid)
+            return JSONResponse(status_code=403, content={
+                "error": {"code": "DOMAIN_NOT_ALLOWED", "message": f"Domain '{domain}' không được phép"}
+            })
 
-    # Fix: cache lại body để FastAPI đọc được sau
-    async def receive():
-        return {"type": "http.request", "body": body_bytes}
+        # Set state vào scope
+        request.state.company_guid = company_guid
+        request.state.user_guid    = user_guid
+        request.state.domain       = domain
+        request.state.request_id   = request_id
+        request.state.tenant       = dict(tenant)
 
-    request._receive = receive
-
-    return await call_next(request)
+        request.scope["_body"] = body_bytes
+        return None
 
 
 async def _get_tenant(company_guid: str):

@@ -1,24 +1,27 @@
 # src/cache/redis_client.py
 import redis.asyncio as aioredis
-import structlog
 from src.core.config import settings
 
-logger = structlog.get_logger()
+_redis: aioredis.Redis | None = None
 
-redis: aioredis.Redis = None
 
 async def init_redis():
-    global redis
-    redis = aioredis.from_url(
+    global _redis
+    _redis = aioredis.from_url(
         settings.REDIS_URL,
         encoding="utf-8",
         decode_responses=True,
     )
-    # Ping để verify connection ngay khi startup
-    await redis.ping()
-    logger.info("redis.connected", url=settings.REDIS_URL)
+
 
 async def close_redis():
-    global redis
-    if redis:
-        await redis.aclose()
+    global _redis
+    if _redis:
+        await _redis.aclose()
+        _redis = None
+
+
+def get_redis() -> aioredis.Redis:
+    if _redis is None:
+        raise RuntimeError("Redis chưa được init. Gọi init_redis() trong lifespan.")
+    return _redis

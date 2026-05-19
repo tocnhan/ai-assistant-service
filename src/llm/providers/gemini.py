@@ -63,7 +63,37 @@ class GeminiProvider(LLMProvider):
         return result
 
     async def stream(self, model, messages, **kwargs) -> AsyncIterator[LLMStreamChunk]:
-        raise NotImplementedError("Streaming implement ở Sprint 4")
+        system_parts = [m["content"] for m in messages if m["role"] == "system"]
+        non_system = [m for m in messages if m["role"] != "system"]
+
+        config_kwargs: dict = {
+            "temperature": kwargs.get("temperature", 0.7),
+            "max_output_tokens": kwargs.get("max_tokens", 2048),
+        }
+        if system_parts:
+            config_kwargs["system_instruction"] = "\n\n".join(system_parts)
+
+        async for chunk in await self.client.aio.models.generate_content_stream(
+            model=model,
+            contents=self._convert_messages(non_system),
+            config=types.GenerateContentConfig(**config_kwargs),
+        ):
+            is_final = chunk.candidates[0].finish_reason is not None
+            usage = None
+            if is_final and chunk.usage_metadata:
+                um = chunk.usage_metadata
+                usage = LLMUsage(
+                    prompt_tokens=um.prompt_token_count or 0,
+                    output_tokens=um.candidates_token_count or 0,
+                    cached_tokens=um.cached_content_token_count or 0,
+                    thoughts_tokens=um.thoughts_token_count or 0,
+                    total_tokens=um.total_token_count or 0,
+                )
+            yield LLMStreamChunk(
+                delta=chunk.text or "",
+                is_final=is_final,
+                usage=usage,
+            )
 
     def supports_streaming(self) -> bool:
-        return False
+        return True

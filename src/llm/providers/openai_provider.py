@@ -38,4 +38,33 @@ class OpenAIProvider(LLMProvider):
         )
 
     async def stream(self, model, messages, **kwargs) -> AsyncIterator[LLMStreamChunk]:
-        raise NotImplementedError  # Sprint 4
+        stream = await self.client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=kwargs.get("temperature", 0.7),
+            max_tokens=kwargs.get("max_tokens", 2048),
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        async for chunk in stream:
+            delta = ""
+            if chunk.choices:
+                delta = chunk.choices[0].delta.content or ""
+
+            is_final = (
+                bool(chunk.choices) and chunk.choices[0].finish_reason is not None
+            )
+
+            usage = None
+            if chunk.usage:
+                u = chunk.usage
+                usage = LLMUsage(
+                    prompt_tokens=u.prompt_tokens,
+                    output_tokens=u.completion_tokens,
+                    total_tokens=u.total_tokens,
+                )
+
+            yield LLMStreamChunk(delta=delta, is_final=is_final, usage=usage)
+
+    def supports_streaming(self) -> bool:
+        return True

@@ -31,6 +31,5 @@ async def seed():
             ON CONFLICT DO NOTHING
         """, p, m, d, i, o, c)
     await conn.close()
-    print("✓ Pricing seeded")
 
 asyncio.run(seed())
