@@ -13,6 +13,10 @@ PRICING = [
     ("openai", "gpt-4o",                date(2025,1,1), 2.50, 10.00,  1.250),
     ("anthropic", "claude-haiku-4-5",   date(2025,1,1), 0.80,  4.00,  0.080),
     ("anthropic", "claude-sonnet-4-6",  date(2025,1,1), 3.00, 15.00,  0.300),
+    ("deepseek",  "deepseek-chat",              date(2026,1,1), 0.07,  1.10,  0.018),
+    ("deepseek",  "deepseek-reasoner",          date(2026,1,1), 0.55,  2.19,  0.138),
+    ("groq",      "llama-3.1-8b-instant",       date(2026,1,1), 0.05,  0.08,  0.000),
+    ("groq",      "llama-3.3-70b-versatile",    date(2026,1,1), 0.59,  0.79,  0.000),
 ]
 
 async def seed():

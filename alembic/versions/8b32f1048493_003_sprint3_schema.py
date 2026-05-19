@@ -1,5 +1,5 @@
 """003_sprint3_schema"""
-revision = 'sprint3_xxx'  # alembic tự gen
+revision = '8b32f1048493'  # alembic tự gen
 down_revision = '0689772182af'
 
 from alembic import op
