@@ -1,5 +1,6 @@
 # src/agents/classifier.py
 import json
+from src.llm.registry import LLMRegistry
 from src.agents.base import BaseAgent
 
 CLASSIFIER_PROMPT = """Bạn là intent classifier. Nhiệm vụ duy nhất: phân loại intent của user message.
@@ -17,13 +18,33 @@ Các intent hợp lệ:
 Chỉ trả về JSON. Không giải thích."""
 
 
+_CLASSIFIER_PRIORITY = [
+    ("groq",      "llama-3.1-8b-instant"),
+    ("deepseek",  "deepseek-chat"),
+    ("gemini",    "gemini-2.5-flash-lite"),
+    ("openai",    "gpt-4o-mini"),
+    ("anthropic", "claude-haiku-4-5"),
+]
+
+
+def _pick_classifier_provider() -> tuple[str, str]:
+    available = set(LLMRegistry.list_providers())
+    for provider, model in _CLASSIFIER_PRIORITY:
+        if provider in available:
+            return provider, model
+    raise RuntimeError(
+        "Cần ít nhất 1 API key để chạy classifier"
+    )
+
+
 class ClassifierAgent(BaseAgent):
     def __init__(self):
+        provider, model = _pick_classifier_provider()
         super().__init__(
-            provider="groq",
-            model="llama-3.1-8b-instant",
+            provider=provider,
+            model=model,
             system_prompt=CLASSIFIER_PROMPT,
-            temperature=0.1,   # thấp để output ổn định
+            temperature=0.1,
             max_tokens=64,
         )
 
@@ -32,7 +53,12 @@ class ClassifierAgent(BaseAgent):
         response = await self.run([{"role": "user", "content": user_message}])
 
         try:
-            result = json.loads(response.text.strip())
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            result = json.loads(text.strip())
             # Validate
             if "intent" not in result:
                 raise ValueError("missing intent")

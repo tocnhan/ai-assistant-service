@@ -80,48 +80,11 @@ async def chat_stream(request: Request, body: ChatRequest):
         final_usage = None
 
         try:
-            if not body.intent_hint:
-                intent_result = await orchestrator.classify(body.message)
-                intent = intent_result["intent"]
-            else:
-                intent = body.intent_hint
-
-            yield _sse({"type": "intent", "intent": intent})
-
-            async for chunk in orchestrator.stream(
+            async for event in orchestrator.run_stream(
                 user_message=body.message,
-                intent_hint=intent,
+                intent_hint=body.intent_hint,
             ):
-                if chunk.delta:
-                    yield _sse({"type": "delta", "delta": chunk.delta})
-                if chunk.usage:
-                    final_usage = chunk.usage
-
-            latency_ms = int((time.time() - started) * 1000)
-            yield _sse({
-                "type": "done",
-                "request_id": request_id,
-                "latency_ms": latency_ms,
-                "usage": {
-                    "total_tokens": final_usage.total_tokens if final_usage else 0,
-                    "prompt_tokens": final_usage.prompt_tokens if final_usage else 0,
-                    "output_tokens": final_usage.output_tokens if final_usage else 0,
-                } if final_usage else {},
-            })
-
-            if final_usage:
-                selector = ModelSelector()
-                provider, model = selector.select("executor")
-                log_usage_background(
-                    company_guid=company_guid,
-                    user_guid=user_guid,
-                    request_id=request_id,
-                    agent_name="orchestrator",
-                    provider=provider,
-                    model=model,
-                    usage=final_usage,
-                    latency_ms=latency_ms,
-                )
+                yield _sse(event)
 
         except Exception as e:
             yield _sse({"type": "error", "message": str(e)})

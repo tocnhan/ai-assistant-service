@@ -6,13 +6,35 @@ DEFAULT_MODELS = {
     "classifier": ("deepseek", "deepseek-chat"),
     "executor":   ("deepseek", "deepseek-chat"),
     "summarizer": ("deepseek", "deepseek-chat"),
-    "premium":    ("anthropic", "claude-sonnet-4-6"),
+    "premium":    ("anthropic", "claude-haiku-4-5"),
 }
 
 class ModelSelector:
     def __init__(self, tenant_overrides: dict = None):
         self._overrides = tenant_overrides or {}
-
+    @classmethod
+    async def from_db(cls, company_guid: str) -> "ModelSelector":
+        try:
+            from src.db.session import DatabasePool
+            async with DatabasePool._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT agent_role, provider, model
+                    FROM ai_service.tenant_model_overrides
+                    WHERE company_guid = $1::uuid
+                    """,
+                    company_guid,
+                )
+            overrides = {
+                row["agent_role"]: {
+                    "provider": row["provider"],
+                    "model":    row["model"],
+                }
+                for row in rows
+            }
+            return cls(tenant_overrides=overrides)
+        except Exception:
+            return cls()  # fallback về default, không crash request
     def select(self, role: str) -> tuple[str, str]:
         """Trả về (provider_name, model_name) cho role."""
         if role in self._overrides:
