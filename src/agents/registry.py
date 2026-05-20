@@ -50,7 +50,13 @@ _INTENT_CONFIG: dict[str, tuple] = {
 
 class AgentRegistry:
     @staticmethod
-    def get_executor(intent: str) -> BaseAgent:
+    def get_executor(intent: str, selector=None) -> BaseAgent:
         config = _INTENT_CONFIG.get(intent, _INTENT_CONFIG["unknown"])
-        provider, model, system_prompt = config
+        _, _, system_prompt = config  # chỉ lấy system_prompt từ config mặc định
+
+        if selector:
+            provider, model = selector.select("executor")
+        else:
+            provider, model = config[0], config[1]
+
         return _make_executor(provider, model, system_prompt)

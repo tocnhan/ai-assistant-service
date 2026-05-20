@@ -31,7 +31,7 @@ class HttpApiCallTool(BaseTool):
         self.headers = headers or {}
         self.timeout = timeout
 
-    async def execute(self, method: str, path: str, body: dict = None, tenant_id: str = None) -> dict:
+    async def _run(self, method: str, path: str, body: dict = None, tenant_id: str = None) -> dict:
         # tenant_id inject từ middleware, KHÔNG để LLM tự sinh
         url = f"{self.base_url}{path}"
         headers = {**self.headers}

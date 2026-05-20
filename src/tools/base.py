@@ -1,4 +1,5 @@
 # src/tools/base.py
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -9,11 +10,50 @@ class BaseTool(ABC):
     input_schema: dict = {}
 
     @abstractmethod
-    async def execute(self, **kwargs) -> Any:
+    async def _run(self, **kwargs) -> Any:
+        """Logic thật của tool viết ở đây."""
         ...
 
+    async def execute(
+        self,
+        company_guid: str = "",
+        conversation_id: str | None = None,
+        request_id: str | None = None,
+        agent_name: str = "",
+        **kwargs,
+    ) -> Any:
+        from src.services.tool_logger import log_tool_call_background
+
+        started = time.time()
+        success = True
+        error_message = None
+        result = {}
+
+        try:
+            result = await self._run(**kwargs)
+            return result
+        except Exception as e:
+            success = False
+            error_message = str(e)
+            result = {"error": error_message}
+            raise
+        finally:
+            latency_ms = int((time.time() - started) * 1000)
+            if company_guid:
+                log_tool_call_background(
+                    company_guid=company_guid,
+                    conversation_id=conversation_id,
+                    request_id=request_id,
+                    agent_name=agent_name,
+                    tool_name=self.name,
+                    input_data=kwargs,
+                    output_data=result if isinstance(result, dict) else {"result": str(result)},
+                    latency_ms=latency_ms,
+                    success=success,
+                    error_message=error_message,
+                )
+
     def to_spec(self) -> dict:
-        """JSON Schema spec để truyền vào LLM tool calling."""
         return {
             "name": self.name,
             "description": self.description,
@@ -40,5 +80,4 @@ class ToolRegistry:
 
     @classmethod
     def get_allowed(cls, whitelist: list[str]) -> list[BaseTool]:
-        """Lấy các tool trong whitelist, bỏ qua tool không tồn tại."""
         return [cls._tools[name] for name in whitelist if name in cls._tools]

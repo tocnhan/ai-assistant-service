@@ -16,7 +16,7 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "gpt-4o-mini",
     ],
     "anthropic": [
-        "claude-sonnet-4-6",
+        "claude-sonnet-4-5",
         "claude-haiku-4-5",
     ],
     "deepseek": [

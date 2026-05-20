@@ -22,7 +22,7 @@ class SearchTool(BaseTool):
         "required": ["query"],
     }
 
-    async def execute(self, query: str, top_k: int = 5, collection: str = None) -> dict:
+    async def _run(self, query: str, top_k: int = 5, collection: str = None) -> dict:
         results = await qdrant_search(query=query, top_k=top_k, collection=collection)
         return {"results": results, "count": len(results)}
 
