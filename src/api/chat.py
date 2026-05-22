@@ -76,14 +76,28 @@ async def chat_stream(request: Request, body: ChatRequest):
     )
 
     async def event_generator():
-        started = time.time()
-        final_usage = None
-
         try:
             async for event in orchestrator.run_stream(
                 user_message=body.message,
                 intent_hint=body.intent_hint,
             ):
+                if event.get("type") == "done":
+                    from src.llm.base import LLMUsage
+                    u = event.get("usage", {})
+                    log_usage_background(
+                        company_guid=company_guid,
+                        user_guid=user_guid,
+                        request_id=request_id,
+                        agent_name="chat_stream",
+                        provider="unknown",
+                        model="unknown",
+                        usage=LLMUsage(
+                            prompt_tokens=u.get("prompt_tokens", 0),
+                            output_tokens=u.get("output_tokens", 0),
+                            total_tokens=u.get("total_tokens", 0),
+                        ),
+                        latency_ms=event.get("latency_ms", 0),
+                    )
                 yield _sse(event)
 
         except Exception as e:
