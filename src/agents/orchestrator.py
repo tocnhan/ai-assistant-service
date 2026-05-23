@@ -71,10 +71,12 @@ class Orchestrator:
 
         # 5. Lấy executor
         from src.llm.selector import ModelSelector
-        tenant_overrides = {
-            role: cfg for role, cfg in effective.default_models.items()
-        }
-        selector = ModelSelector(tenant_overrides=tenant_overrides)
+        selector = await ModelSelector.from_db(self.company_guid)
+
+        # Merge thêm pack default nếu DB không có override cho role đó
+        for role, cfg in effective.default_models.items():
+            if role not in selector._overrides:
+                selector._overrides[role] = cfg
         executor = AgentRegistry.get_executor(
             intent=intent,
             selector=selector,
@@ -96,14 +98,19 @@ class Orchestrator:
 
         # 7. Persist memory
         if self.conversation_id:
-            await self.memory.append(self.conversation_id, "user", user_message)
-            await self.memory.append(self.conversation_id, "assistant", full_response)
+            await self.memory.append_turn(
+                self.conversation_id,
+                user_content=user_message,
+                assistant_content=full_response,
+            )
 
         latency_ms = int((time.time() - started) * 1000)
         yield {
             "type": "done",
             "latency_ms": latency_ms,
             "pack_id": effective.pack_id,
+            "provider": executor.provider,   
+            "model": executor.model,         
             "usage": {
                 "total_tokens": final_usage.total_tokens if final_usage else 0,
                 "prompt_tokens": final_usage.prompt_tokens if final_usage else 0,
