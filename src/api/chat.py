@@ -19,6 +19,8 @@ class ChatRequest(BaseModel):
     message: str
     conversation_id: str | None = None
     intent_hint: str | None = None
+    current_screen: str | None = None
+    business_rules: str | None = None
 
 
 # ── Non-streaming (backward compat) ──────────────────────────────────────────
@@ -33,6 +35,8 @@ async def chat(request: Request, body: ChatRequest):
     llm = LLMRegistry.get(provider)
 
     started = time.time()
+
+    effective = await resolve_for_tenant(self.company_guid)
     response = await llm.generate(
         model=model,
         messages=[{"role": "user", "content": body.message}]
@@ -73,6 +77,7 @@ async def chat_stream(request: Request, body: ChatRequest):
     orchestrator = Orchestrator(
         company_guid=company_guid,
         conversation_id=body.conversation_id,
+        
     )
 
     async def event_generator():
@@ -80,8 +85,10 @@ async def chat_stream(request: Request, body: ChatRequest):
             async for event in orchestrator.run_stream(
                 user_message=body.message,
                 intent_hint=body.intent_hint,
+                current_screen=body.current_screen,
+                business_rules=body.business_rules,
             ):
-                if event.get("type") == "done":
+                if isinstance(event, dict) and event.get("type") == "done":
                     from src.llm.base import LLMUsage
                     u = event.get("usage", {})
                     log_usage_background(
@@ -101,6 +108,8 @@ async def chat_stream(request: Request, body: ChatRequest):
                 yield _sse(event)
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()  # thêm dòng này
             yield _sse({"type": "error", "message": str(e)})
 
     return StarletteStreamingResponse(
@@ -114,4 +123,6 @@ async def chat_stream(request: Request, body: ChatRequest):
 
 
 def _sse(data: dict) -> str:
+    if isinstance(data, str):
+        data = {"type": "raw", "text": data}
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
