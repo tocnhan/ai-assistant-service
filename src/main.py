@@ -9,6 +9,8 @@ from src.middleware.tenant import HMACMiddleware
 from src.api.chat import router as chat_router
 from src.api.providers import router as providers_router
 import src.tools.search_tool
+from src.api.admin_packs import router as admin_packs_router
+
 
 
 @asynccontextmanager
@@ -30,6 +32,8 @@ app = FastAPI(
 app.add_middleware(HMACMiddleware)
 app.include_router(chat_router)
 app.include_router(providers_router)
+app.include_router(admin_packs_router)
+
 
 
 @app.get("/health")

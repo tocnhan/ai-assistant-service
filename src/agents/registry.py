@@ -1,11 +1,8 @@
 # src/agents/registry.py
 from src.agents.base import BaseAgent
-from src.llm.selector import DEFAULT_MODELS
 
 
 def _make_executor(provider: str, model: str, system_prompt: str = "") -> BaseAgent:
-    from src.agents.base import BaseAgent
-
     class ExecutorAgent(BaseAgent):
         pass
 
@@ -18,45 +15,31 @@ def _make_executor(provider: str, model: str, system_prompt: str = "") -> BaseAg
     )
 
 
-# Map intent → (provider, model, system_prompt)
-_INTENT_CONFIG: dict[str, tuple] = {
-    "general_chat": (
-        DEFAULT_MODELS["executor"][0],
-        DEFAULT_MODELS["executor"][1],
-        "Bạn là AI assistant hữu ích, trả lời ngắn gọn và chính xác.",
-    ),
-    "search_knowledge": (
-        DEFAULT_MODELS["executor"][0],
-        DEFAULT_MODELS["executor"][1],
-        "Bạn là AI assistant chuyên tìm kiếm và tổng hợp thông tin.",
-    ),
-    "api_action": (
-        DEFAULT_MODELS["executor"][0],
-        DEFAULT_MODELS["executor"][1],
-        "Bạn là AI assistant thực hiện các thao tác qua API. Xác nhận rõ ràng trước khi thực hiện.",
-    ),
-    "summarize": (
-        DEFAULT_MODELS["summarizer"][0],
-        DEFAULT_MODELS["summarizer"][1],
-        "Bạn là AI assistant chuyên tóm tắt nội dung súc tích, đầy đủ ý.",
-    ),
-    "unknown": (
-        DEFAULT_MODELS["executor"][0],
-        DEFAULT_MODELS["executor"][1],
-        "Bạn là AI assistant hữu ích.",
-    ),
+_DEFAULT_PROMPTS = {
+    "general_chat": "Bạn là AI assistant hữu ích, trả lời ngắn gọn và chính xác.",
+    "search_knowledge": "Bạn là AI assistant chuyên tìm kiếm và tổng hợp thông tin.",
+    "api_action": "Bạn là AI assistant thực hiện các thao tác qua API. Xác nhận rõ ràng trước khi thực hiện.",
+    "summarize": "Bạn là AI assistant chuyên tóm tắt nội dung súc tích, đầy đủ ý.",
+    "unknown": "Bạn là AI assistant hữu ích.",
 }
 
 
 class AgentRegistry:
     @staticmethod
-    def get_executor(intent: str, selector=None) -> BaseAgent:
-        config = _INTENT_CONFIG.get(intent, _INTENT_CONFIG["unknown"])
-        _, _, system_prompt = config  # chỉ lấy system_prompt từ config mặc định
+    def get_executor(
+        intent: str,
+        selector=None,
+        system_prompt_override: str | None = None,
+    ) -> BaseAgent:
+        # Ưu tiên: prompt từ template engine > default hardcode
+        system_prompt = system_prompt_override or _DEFAULT_PROMPTS.get(
+            intent, _DEFAULT_PROMPTS["unknown"]
+        )
 
         if selector:
             provider, model = selector.select("executor")
         else:
-            provider, model = config[0], config[1]
+            from src.llm.selector import DEFAULT_MODELS
+            provider, model = DEFAULT_MODELS["executor"]
 
         return _make_executor(provider, model, system_prompt)
