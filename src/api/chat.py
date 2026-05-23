@@ -36,7 +36,6 @@ async def chat(request: Request, body: ChatRequest):
 
     started = time.time()
 
-    effective = await resolve_for_tenant(self.company_guid)
     response = await llm.generate(
         model=model,
         messages=[{"role": "user", "content": body.message}]
@@ -96,8 +95,8 @@ async def chat_stream(request: Request, body: ChatRequest):
                         user_guid=user_guid,
                         request_id=request_id,
                         agent_name="chat_stream",
-                        provider="unknown",
-                        model="unknown",
+                        provider=event.get("provider", "unknown"),
+                        model=event.get("model", "unknown"),
                         usage=LLMUsage(
                             prompt_tokens=u.get("prompt_tokens", 0),
                             output_tokens=u.get("output_tokens", 0),
@@ -109,7 +108,27 @@ async def chat_stream(request: Request, body: ChatRequest):
 
         except Exception as e:
             import traceback
-            traceback.print_exc()  # thêm dòng này
+            traceback.print_exc()
+
+            if final_usage is not None:
+                from src.llm.base import LLMUsage
+                log_usage_background(
+                    company_guid=company_guid,
+                    user_guid=user_guid,
+                    request_id=request_id,
+                    agent_name="chat_stream",
+                    provider="unknown",
+                    model="unknown",
+                    usage=LLMUsage(
+                        prompt_tokens=final_usage.prompt_tokens,
+                        output_tokens=final_usage.output_tokens,
+                        total_tokens=final_usage.total_tokens,
+                    ),
+                    latency_ms=int((time.time() - started) * 1000),
+                    success=False,
+                    error_code=type(e).__name__,
+                )
+
             yield _sse({"type": "error", "message": str(e)})
 
     return StarletteStreamingResponse(

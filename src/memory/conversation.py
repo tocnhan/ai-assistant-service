@@ -35,3 +35,16 @@ class ConversationMemory:
     async def clear(self, conversation_id: str):
         redis = get_redis()
         await redis.delete(self._key(conversation_id))
+
+    async def append_turn(self, conversation_id: str, user_content: str, assistant_content: str):
+        """Lưu cả 1 turn (user + assistant) trong 1 pipeline duy nhất."""
+        redis = get_redis()
+        key = self._key(conversation_id)
+        user_msg = json.dumps({"role": "user", "content": user_content}, ensure_ascii=False)
+        assistant_msg = json.dumps({"role": "assistant", "content": assistant_content}, ensure_ascii=False)
+
+        pipe = redis.pipeline()
+        pipe.rpush(key, user_msg, assistant_msg)
+        pipe.ltrim(key, -(WINDOW_SIZE * 2), -1)
+        pipe.expire(key, TTL_SECONDS)
+        await pipe.execute()

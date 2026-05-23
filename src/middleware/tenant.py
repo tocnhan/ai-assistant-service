@@ -97,7 +97,7 @@ class HMACMiddleware:
                     """SELECT EXISTS(
                         SELECT 1 FROM ai_service.allowed_domains
                         WHERE company_guid = $1::uuid
-                        AND domain = $2
+                        AND LOWER(RTRIM(domain, '/')) = LOWER(RTRIM($2, '/'))
                         AND is_active = TRUE
                     )""",
                     company_guid, domain
