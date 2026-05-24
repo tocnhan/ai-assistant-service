@@ -1,5 +1,6 @@
 # src/agents/orchestrator.py
 import time
+import asyncio
 from src.agents.classifier import ClassifierAgent
 from src.agents.registry import AgentRegistry
 from src.memory.conversation import ConversationMemory
@@ -9,13 +10,18 @@ from src.packs.template_engine import render_prompt, build_context
 
 class Orchestrator:
     _classifier: ClassifierAgent | None = None
+    _classifier_lock = asyncio.Lock()
 
     @classmethod
-    def _get_classifier(cls) -> ClassifierAgent:
-        from src.llm.registry import LLMRegistry
+    async def _get_classifier(cls) -> ClassifierAgent:
         available = LLMRegistry.list_providers()
-        if cls._classifier is None or cls._classifier.provider not in available:
-            cls._classifier = ClassifierAgent()
+        if cls._classifier is not None and cls._classifier.provider in available:
+            return cls._classifier  # fast path, không cần lock
+
+        async with cls._classifier_lock:
+            # Double-check sau khi acquire lock
+            if cls._classifier is None or cls._classifier.provider not in available:
+                cls._classifier = ClassifierAgent()
         return cls._classifier
 
     def __init__(self, company_guid: str, conversation_id: str | None = None):
@@ -40,7 +46,8 @@ class Orchestrator:
             intent = intent_hint
             confidence = 1.0
         else:
-            result = await self._get_classifier().classify(user_message)
+            classifier = await self._get_classifier()
+            result = await classifier.classify(user_message)
             intent = result["intent"]
             confidence = result.get("confidence", 0.5)
 
