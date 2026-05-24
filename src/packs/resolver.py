@@ -36,7 +36,11 @@ async def resolve_for_tenant(company_guid: str) -> EffectiveConfig:
         pack = await load_pack("generic@1.0.0")
         return _to_effective(pack, overrides={})
 
-    pack = await load_pack(row["pack_id"])
+    try:
+        pack = await load_pack(row["pack_id"])
+    except Exception:
+        pack = await load_pack("generic@1.0.0")    
+        
     overrides = row["overrides"] or {}
     if isinstance(overrides, str):
         overrides = json.loads(overrides)

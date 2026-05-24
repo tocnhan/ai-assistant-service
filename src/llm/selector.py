@@ -35,24 +35,26 @@ class ModelSelector:
             return cls(tenant_overrides=overrides)
         except Exception:
             return cls()  # fallback về default, không crash request
+
     def select(self, role: str) -> tuple[str, str]:
-        """Trả về (provider_name, model_name) cho role."""
+        available = LLMRegistry.list_providers()
+
         if role in self._overrides:
             o = self._overrides[role]
-            return o["provider"], o["model"]
+            # ✅ check provider có available không trước khi return
+            if o["provider"] in available:
+                return o["provider"], o["model"]
+            # provider không available → fallthrough xuống default
 
         if role in DEFAULT_MODELS:
             provider, model = DEFAULT_MODELS[role]
-            # Fallback nếu provider chưa được register (key chưa set)
-            if provider in LLMRegistry.list_providers():
+            if provider in available:
                 return provider, model
 
-        # Ultimate fallback: provider đầu tiên available
-        available = LLMRegistry.list_providers()
+        # Ultimate fallback
         if not available:
             raise RuntimeError("Không có LLM provider nào được register")
         provider = available[0]
-        # Model mặc định của provider đó
         fallback_models = {
             "gemini": "gemini-2.5-flash-lite",
             "openai": "gpt-4o-mini",

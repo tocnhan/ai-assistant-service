@@ -30,39 +30,50 @@ async def chat(request: Request, body: ChatRequest):
     user_guid    = request.state.user_guid
     request_id   = request.state.request_id
 
-    selector = ModelSelector()
-    provider, model = selector.select("executor")
-    llm = LLMRegistry.get(provider)
-
     started = time.time()
-
-    response = await llm.generate(
-        model=model,
-        messages=[{"role": "user", "content": body.message}]
+    orchestrator = Orchestrator(
+        company_guid=company_guid,
+        conversation_id=body.conversation_id,
     )
+
+    # Collect full response từ stream
+    full_response = ""
+    final_event = {}
+    async for event in orchestrator.run_stream(
+        user_message=body.message,
+        intent_hint=body.intent_hint,
+        current_screen=body.current_screen,
+        business_rules=body.business_rules,
+    ):
+        if event["type"] == "delta":
+            full_response += event["delta"]
+        if event["type"] == "done":
+            final_event = event
+
     latency_ms = int((time.time() - started) * 1000)
+    usage = final_event.get("usage", {})
 
     log_usage_background(
         company_guid=company_guid,
         user_guid=user_guid,
         request_id=request_id,
         agent_name="chat",
-        provider=provider,
-        model=model,
-        usage=response.usage,
+        provider=final_event.get("provider", "unknown"),
+        model=final_event.get("model", "unknown"),
+        usage=LLMUsage(
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+        ),
         latency_ms=latency_ms,
     )
 
     return {
-        "response": response.text,
+        "response": full_response,
         "request_id": request_id,
-        "provider": provider,
-        "model": model,
-        "usage": {
-            "total_tokens": response.usage.total_tokens,
-            "prompt_tokens": response.usage.prompt_tokens,
-            "output_tokens": response.usage.output_tokens,
-        },
+        "provider": final_event.get("provider", "unknown"),
+        "model": final_event.get("model", "unknown"),
+        "usage": usage,
     }
 
 
@@ -80,6 +91,8 @@ async def chat_stream(request: Request, body: ChatRequest):
     )
 
     async def event_generator():
+        final_usage = None
+        started = time.time()
         try:
             async for event in orchestrator.run_stream(
                 user_message=body.message,
