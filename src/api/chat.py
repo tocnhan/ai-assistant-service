@@ -10,6 +10,7 @@ from src.llm.selector import ModelSelector
 from src.agents.orchestrator import Orchestrator
 from src.services.usage_logger import log_usage_background
 from starlette.responses import StreamingResponse as StarletteStreamingResponse
+from src.llm.base import LLMUsage
 
 
 router = APIRouter()
@@ -101,7 +102,6 @@ async def chat_stream(request: Request, body: ChatRequest):
                 business_rules=body.business_rules,
             ):
                 if isinstance(event, dict) and event.get("type") == "done":
-                    from src.llm.base import LLMUsage
                     u = event.get("usage", {})
                     log_usage_background(
                         company_guid=company_guid,
@@ -124,7 +124,6 @@ async def chat_stream(request: Request, body: ChatRequest):
             traceback.print_exc()
 
             if final_usage is not None:
-                from src.llm.base import LLMUsage
                 log_usage_background(
                     company_guid=company_guid,
                     user_guid=user_guid,
