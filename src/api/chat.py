@@ -123,7 +123,7 @@ async def chat_stream(request: Request, body: ChatRequest):
             import traceback
             traceback.print_exc()
 
-            if final_usage is not None:
+            if final_usage != None:
                 log_usage_background(
                     company_guid=company_guid,
                     user_guid=user_guid,
