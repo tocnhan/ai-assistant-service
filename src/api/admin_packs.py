@@ -29,7 +29,10 @@ class UpsertTemplateRequest(BaseModel):
 
 # ── CRUD Pack ────────────────────────────────────────────────────────────────
 
-@router.post("/packs")
+@router.post(
+    "/packs",
+    responses={400: {"description": "Pack ID đã tồn tại"}},
+)
 async def create_pack(body: CreatePackRequest):
     async with DatabasePool._pool.acquire() as conn:
         try:
