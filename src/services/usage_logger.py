@@ -1,11 +1,13 @@
 # src/services/usage_logger.py
 import asyncio
-import time
 import structlog
 from src.db.session import DatabasePool
 from src.llm.pricing import calculate_cost
 
 logger = structlog.get_logger()
+
+# Strong reference set — giữ task khỏi bị GC trước khi chạy xong
+_background_tasks: set = set()
 
 async def log_usage(
     company_guid: str,
@@ -22,7 +24,6 @@ async def log_usage(
     try:
         cost = await calculate_cost(provider, model, usage)
 
-        # src/services/usage_logger.py — sửa phần INSERT
         async with DatabasePool._pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
@@ -68,9 +69,11 @@ def log_usage_background(
     model: str,
     usage,
     latency_ms: int,
+    success: bool = True,
+    error_code: str = None,
 ):
     """Gọi cái này trong endpoint — không block response."""
-    asyncio.create_task(log_usage(
+    task = asyncio.create_task(log_usage(
         company_guid=company_guid,
         user_guid=user_guid,
         request_id=request_id,
@@ -79,4 +82,9 @@ def log_usage_background(
         model=model,
         usage=usage,
         latency_ms=latency_ms,
+        success=success,
+        error_code=error_code,
     ))
+    # Lưu strong reference — tự cleanup khi task hoàn thành
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
