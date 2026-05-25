@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 load_dotenv()
 DATABASE_URL = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
 import re
-DATABASE_URL = re.sub(r"postgresql://[^:]+:[^@]+@", "postgresql://ai_admin:ai_admin@", DATABASE_URL)
 PACKS = [
     {
         "pack_id": "tourism@1.0.0",
