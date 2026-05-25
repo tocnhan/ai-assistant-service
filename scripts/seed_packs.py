@@ -11,6 +11,7 @@ DATABASE_URL = os.environ["DATABASE_ADMIN_URL"].replace("postgresql+asyncpg://",
 PACK_TOURISM = "tourism@1.0.0"
 PACK_GENERIC = "generic@1.0.0"
 PACK_SPA     = "spa_booking@1.0.0"
+PACK_MODELS  = "llama-3.1-8b-instant"
 
 PACKS = [
     {
@@ -20,7 +21,7 @@ PACKS = [
             "intents": ["general_chat", "search_knowledge", "api_action", "summarize", "unknown"],
             "tool_whitelist": ["qdrant_search", "http_api_call"],
             "default_models": {
-                "classifier": {"provider": "groq", "model": "llama-3.1-8b-instant"},
+                "classifier": {"provider": "groq", "model": PACK_MODELS},
                 "executor": {"provider": "deepseek", "model": "deepseek-chat"},
             },
         },
@@ -32,7 +33,7 @@ PACKS = [
             "intents": ["general_chat", "search_knowledge", "unknown"],
             "tool_whitelist": [],
             "default_models": {
-                "classifier": {"provider": "groq", "model": "llama-3.1-8b-instant"},
+                "classifier": {"provider": "groq", "model": PACK_MODELS},
                 "executor": {"provider": "deepseek", "model": "deepseek-chat"},
             },
         },
@@ -44,7 +45,7 @@ PACKS = [
             "intents": ["general_chat", "api_action", "search_knowledge", "unknown"],
             "tool_whitelist": ["http_api_call"],
             "default_models": {
-                "classifier": {"provider": "groq", "model": "llama-3.1-8b-instant"},
+                "classifier": {"provider": "groq", "model": PACK_MODELS},
                 "executor": {"provider": "deepseek", "model": "deepseek-chat"},
             },
         },
