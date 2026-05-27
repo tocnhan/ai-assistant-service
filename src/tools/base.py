@@ -60,6 +60,22 @@ class BaseTool(ABC):
             "input_schema": self.input_schema,
         }
 
+    def configure(self, config: dict) -> "BaseTool":
+        """
+        Nhận config từ DB (tenant_tool_configs.config),
+        trả về instance mới đã được cấu hình.
+        Override ở subclass nào cần config runtime.
+        """
+        return self
+
+    def to_mcp_spec(self) -> dict:
+        """MCP-compatible tool spec để export cho LLM."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "input_schema": self.input_schema,
+        }
+
 
 class ToolRegistry:
     _tools: dict[str, BaseTool] = {}
@@ -81,3 +97,12 @@ class ToolRegistry:
     @classmethod
     def get_allowed(cls, whitelist: list[str]) -> list[BaseTool]:
         return [cls._tools[name] for name in whitelist if name in cls._tools]
+        
+    @classmethod
+    def get_configured(cls, name: str, config: dict) -> "BaseTool":
+        """
+        Lấy tool theo tên, inject config per-tenant vào.
+        Trả về instance mới — không mutate instance gốc.
+        """
+        tool = cls.get(name)
+        return tool.configure(config)
