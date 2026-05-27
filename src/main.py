@@ -10,6 +10,8 @@ from src.api.chat import router as chat_router
 from src.api.providers import router as providers_router
 import src.tools.search_tool
 from src.api.admin_packs import router as admin_packs_router
+from src.tools.loader import ToolPluginLoader
+from src.api.admin_tools import router as admin_tools_router
 
 
 
@@ -18,6 +20,7 @@ async def lifespan(app: FastAPI):
     await DatabasePool.init()
     await init_redis()
     LLMRegistry.register_all()
+    ToolPluginLoader.discover()
     yield
     await close_redis()
     await DatabasePool.close()
@@ -33,6 +36,7 @@ app.add_middleware(HMACMiddleware)
 app.include_router(chat_router)
 app.include_router(providers_router)
 app.include_router(admin_packs_router)
+app.include_router(admin_tools_router)
 
 
 

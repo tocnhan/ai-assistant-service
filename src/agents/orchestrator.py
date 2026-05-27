@@ -7,11 +7,19 @@ from src.llm.registry import LLMRegistry
 from src.memory.conversation import ConversationMemory
 from src.packs.resolver import resolve_for_tenant
 from src.packs.template_engine import render_prompt, build_context
+from src.services.tool_config import ToolConfigService
 
 
 class Orchestrator:
     _classifier: ClassifierAgent | None = None
     _classifier_lock = asyncio.Lock()
+
+    async def _load_tools(self, effective) -> list:
+        """Load tools đã configured cho tenant này."""
+        return await ToolConfigService.get_tools_for_tenant(
+            company_guid=self.company_guid,
+            whitelist=effective.tool_whitelist,
+        )
 
     @classmethod
     async def _get_classifier(cls) -> ClassifierAgent:
@@ -70,7 +78,7 @@ class Orchestrator:
         )
         return render_prompt(template_text, context)
 
-    async def _build_executor(self, intent: str, effective, rendered_prompt: str):
+    async def _build_executor(self, intent: str, effective, rendered_prompt: str, tools: list = None):
         from src.llm.selector import ModelSelector
         selector = await ModelSelector.from_db(self.company_guid)
 
@@ -82,6 +90,7 @@ class Orchestrator:
             intent=intent,
             selector=selector,
             system_prompt_override=rendered_prompt,
+            tools=tools or [],
         )
 
     # ── Main ──────────────────────────────────────────────────────────────────
@@ -115,7 +124,8 @@ class Orchestrator:
             history = await self.memory.get(self.conversation_id)
 
         # 5. Build executor
-        executor = await self._build_executor(intent, effective, rendered_prompt)
+        tools = await self._load_tools(effective)
+        executor = await self._build_executor(intent, effective, rendered_prompt, tools)
         messages = history + [{"role": "user", "content": user_message}]
 
         # 6. Stream response
