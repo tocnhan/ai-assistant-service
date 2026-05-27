@@ -17,7 +17,7 @@ def render_prompt(template_text: str, context: dict) -> str:
         tmpl = _jinja_env.from_string(template_text)
         return tmpl.render(**context)
     except Exception as e:
-        log.error(f"Template render error: {e} | template: {template_text[:100]}")
+        logging.exception(f"Template render error: {e} | template: {template_text[:100]}")
         return template_text  # fallback về template thô, không crash request
 
 

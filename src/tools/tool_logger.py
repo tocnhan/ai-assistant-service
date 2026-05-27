@@ -57,4 +57,5 @@ async def log_tool_call(
 
 def log_tool_call_background(**kwargs):
     """Fire-and-forget, không block response."""
-    asyncio.create_task(log_tool_call(**kwargs))
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(log_tool_call(**kwargs))

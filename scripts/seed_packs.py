@@ -6,42 +6,46 @@ import asyncpg
 from dotenv import load_dotenv
 
 load_dotenv()
-DATABASE_URL = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
-import re
-DATABASE_URL = re.sub(r"postgresql://[^:]+:[^@]+@", "postgresql://ai_admin:ai_admin@", DATABASE_URL)
+DATABASE_URL = os.environ["DATABASE_ADMIN_URL"].replace("postgresql+asyncpg://", "postgresql://")
+
+PACK_TOURISM = "tourism@1.0.0"
+PACK_GENERIC = "generic@1.0.0"
+PACK_SPA     = "spa_booking@1.0.0"
+PACK_MODELS  = "llama-3.1-8b-instant"
+
 PACKS = [
     {
-        "pack_id": "tourism@1.0.0",
+        "pack_id": PACK_TOURISM,
         "display_name": "Du lịch & Khách sạn",
         "config": {
             "intents": ["general_chat", "search_knowledge", "api_action", "summarize", "unknown"],
             "tool_whitelist": ["qdrant_search", "http_api_call"],
             "default_models": {
-                "classifier": {"provider": "groq", "model": "llama-3.1-8b-instant"},
+                "classifier": {"provider": "groq", "model": PACK_MODELS},
                 "executor": {"provider": "deepseek", "model": "deepseek-chat"},
             },
         },
     },
     {
-        "pack_id": "generic@1.0.0",
+        "pack_id": PACK_GENERIC,
         "display_name": "Gói chung (mọi ngành)",
         "config": {
             "intents": ["general_chat", "search_knowledge", "unknown"],
             "tool_whitelist": [],
             "default_models": {
-                "classifier": {"provider": "groq", "model": "llama-3.1-8b-instant"},
+                "classifier": {"provider": "groq", "model": PACK_MODELS},
                 "executor": {"provider": "deepseek", "model": "deepseek-chat"},
             },
         },
     },
     {
-        "pack_id": "spa_booking@1.0.0",
+        "pack_id": PACK_SPA,
         "display_name": "Spa & Clinic Booking",
         "config": {
             "intents": ["general_chat", "api_action", "search_knowledge", "unknown"],
             "tool_whitelist": ["http_api_call"],
             "default_models": {
-                "classifier": {"provider": "groq", "model": "llama-3.1-8b-instant"},
+                "classifier": {"provider": "groq", "model": PACK_MODELS},
                 "executor": {"provider": "deepseek", "model": "deepseek-chat"},
             },
         },
@@ -50,7 +54,7 @@ PACKS = [
 
 TEMPLATES = [
     {
-        "pack_id": "tourism@1.0.0",
+        "pack_id": PACK_TOURISM,
         "intent": "general_chat",
         "role": "system",
         "template_text": (
@@ -61,7 +65,7 @@ TEMPLATES = [
         ),
     },
     {
-        "pack_id": "tourism@1.0.0",
+        "pack_id": PACK_TOURISM,
         "intent": "api_action",
         "role": "system",
         "template_text": (
@@ -72,7 +76,7 @@ TEMPLATES = [
         ),
     },
     {
-        "pack_id": "generic@1.0.0",
+        "pack_id": PACK_GENERIC,
         "intent": "general_chat",
         "role": "system",
         "template_text": (
@@ -82,7 +86,7 @@ TEMPLATES = [
         ),
     },
     {
-        "pack_id": "spa_booking@1.0.0",
+        "pack_id": PACK_SPA,
         "intent": "general_chat",
         "role": "system",
         "template_text": (
@@ -92,7 +96,7 @@ TEMPLATES = [
         ),
     },
     {
-        "pack_id": "spa_booking@1.0.0",
+        "pack_id": PACK_SPA,
         "intent": "api_action",
         "role": "system",
         "template_text": (
