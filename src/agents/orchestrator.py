@@ -90,7 +90,6 @@ class Orchestrator:
             intent=intent,
             selector=selector,
             system_prompt_override=rendered_prompt,
-            tools=tools or [],
         )
 
     # ── Main ──────────────────────────────────────────────────────────────────

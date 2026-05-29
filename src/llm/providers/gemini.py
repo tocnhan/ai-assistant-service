@@ -1,11 +1,31 @@
 from google import genai
 from google.genai import types
 from src.llm.base import LLMProvider, LLMResponse, LLMUsage, LLMStreamChunk
+from src.core.config import settings
 from typing import AsyncIterator, Optional
+import time
+
+def _get_langfuse():
+    if settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY:
+        from langfuse import Langfuse
+        return Langfuse(
+            public_key=settings.LANGFUSE_PUBLIC_KEY,
+            secret_key=settings.LANGFUSE_SECRET_KEY,
+            host=settings.LANGFUSE_HOST or "https://cloud.langfuse.com",
+        )
+    return None
+
 
 class GeminiProvider(LLMProvider):
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key)
+        self.langfuse = None
+        
+    @property
+    def langfuse(self):
+        if self._langfuse is None:
+            self._langfuse = _get_langfuse()
+        return self._langfuse
 
     async def generate(
         self,
@@ -17,10 +37,7 @@ class GeminiProvider(LLMProvider):
         thinking_budget: Optional[int] = None,
         **kwargs,
     ) -> LLMResponse:
-        # Tách system prompt ra — Gemini dùng system_instruction riêng
-        system_parts = [
-            m["content"] for m in messages if m["role"] == "system"
-        ]
+        system_parts = [m["content"] for m in messages if m["role"] == "system"]
         non_system = [m for m in messages if m["role"] != "system"]
 
         config_kwargs: dict = {
@@ -34,11 +51,13 @@ class GeminiProvider(LLMProvider):
         if system_parts:
             config_kwargs["system_instruction"] = "\n\n".join(system_parts)
 
+        start = time.time()
         response = await self.client.aio.models.generate_content(
             model=model,
             contents=self._convert_messages(non_system),
             config=types.GenerateContentConfig(**config_kwargs),
         )
+        latency = int((time.time() - start) * 1000)
 
         um = response.usage_metadata
         usage = LLMUsage(
@@ -48,6 +67,23 @@ class GeminiProvider(LLMProvider):
             thoughts_tokens=um.thoughts_token_count or 0,
             total_tokens=um.total_token_count or 0,
         )
+
+        # Langfuse trace
+        if self.langfuse:
+            trace = self.langfuse.trace(name="gemini.generate")
+            trace.generation(
+                name="generate",
+                model=model,
+                input=messages,
+                output=response.text,
+                usage={
+                    "input": usage.prompt_tokens,
+                    "output": usage.output_tokens,
+                    "total": usage.total_tokens,
+                },
+                latency=latency,
+            )
+
         return LLMResponse(
             text=response.text,
             usage=usage,
@@ -73,6 +109,9 @@ class GeminiProvider(LLMProvider):
         if system_parts:
             config_kwargs["system_instruction"] = "\n\n".join(system_parts)
 
+        start = time.time()
+        trace = self.langfuse.trace(name="gemini.stream") if self.langfuse else None
+
         async for chunk in await self.client.aio.models.generate_content_stream(
             model=model,
             contents=self._convert_messages(non_system),
@@ -89,6 +128,20 @@ class GeminiProvider(LLMProvider):
                     thoughts_tokens=um.thoughts_token_count or 0,
                     total_tokens=um.total_token_count or 0,
                 )
+                if trace:
+                    trace.generation(
+                        name="stream",
+                        model=model,
+                        input=messages,
+                        output="[streamed]",
+                        usage={
+                            "input": usage.prompt_tokens,
+                            "output": usage.output_tokens,
+                            "total": usage.total_tokens,
+                        },
+                        latency=int((time.time() - start) * 1000),
+                    )
+
             yield LLMStreamChunk(
                 delta=chunk.text or "",
                 is_final=is_final,

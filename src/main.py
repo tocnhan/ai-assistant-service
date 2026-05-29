@@ -14,6 +14,7 @@ from src.api.admin_tools import router as admin_tools_router
 from src.api.admin_wallet import router as admin_wallet_router
 from src.api.tenant_wallet import router as tenant_wallet_router
 from src.services.scheduler import start_scheduler, stop_scheduler
+from prometheus_fastapi_instrumentator import Instrumentator
 
 
 
@@ -35,6 +36,8 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs" if settings.APP_ENV != "production" else None,
 )
+
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 app.add_middleware(HMACMiddleware)
 app.include_router(chat_router)
