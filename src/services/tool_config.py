@@ -35,20 +35,21 @@ class ToolConfigService:
 
         try:
             async with DatabasePool._pool.acquire() as conn:
-                await conn.execute(
-                    "SELECT set_config('app.current_tenant', $1::text, true)",
-                    str(company_guid),
-                )
-                rows = await conn.fetch(
-                    """
-                    SELECT tool_name, is_enabled, config
-                    FROM ai_service.tenant_tool_configs
-                    WHERE company_guid = $1::uuid
-                    AND tool_name = ANY($2::varchar[])
-                    """,
-                    company_guid,
-                    whitelist,
-                )
+                async with conn.transaction():
+                    await conn.execute(
+                        "SELECT set_config('app.current_tenant', $1::text, true)",
+                        str(company_guid),
+                    )
+                    rows = await conn.fetch(
+                        """
+                        SELECT tool_name, is_enabled, config
+                        FROM ai_service.tenant_tool_configs
+                        WHERE company_guid = $1::uuid
+                        AND tool_name = ANY($2::varchar[])
+                        """,
+                        company_guid,
+                        whitelist,
+                    )
         except Exception as e:
             logger.error("tool_config.load_failed", error=str(e), company_guid=company_guid)
             rows = []

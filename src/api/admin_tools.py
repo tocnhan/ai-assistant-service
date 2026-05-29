@@ -73,15 +73,17 @@ async def get_tenant_tools(company_guid: str):
     result = []
     for r in rows:
         config_schema = r["config_schema"]
+        config = r["config"] or {}
         if isinstance(config_schema, str):
             config_schema = json.loads(config_schema)
+            config = json.loads(config)
         result.append({
             "tool_name": r["tool_name"],
             "display_name": r["display_name"],
             "description": r["description"],
             "config_schema": config_schema,
             "is_enabled": r["is_enabled"],
-            "config": r["config"] or {},
+            "config": config,
             "updated_at": str(r["updated_at"]) if r["updated_at"] else None,
         })
 
@@ -143,29 +145,23 @@ async def upsert_tenant_tool_config(
 
 @router.delete("/tenants/{company_guid}/tools/{tool_name}")
 async def delete_tenant_tool_config(company_guid: str, tool_name: str):
-    """
-    Xóa config tool của tenant — tool sẽ về trạng thái default.
-    """
     async with DatabasePool._pool.acquire() as conn:
-        await conn.execute(
-            "SELECT set_config('app.current_tenant', $1::text, true)",
-            company_guid,
-        )
-        result = await conn.execute(
-            """
-            DELETE FROM ai_service.tenant_tool_configs
-            WHERE company_guid = $1::uuid AND tool_name = $2
-            """,
-            company_guid,
-            tool_name,
-        )
+        async with conn.transaction():      # ← wrap transaction
+            await conn.execute(
+                "SELECT set_config('app.current_tenant', $1::text, true)",
+                company_guid,
+            )
+            result = await conn.execute(
+                """
+                DELETE FROM ai_service.tenant_tool_configs
+                WHERE company_guid = $1::uuid AND tool_name = $2
+                """,
+                company_guid,
+                tool_name,
+            )
 
     deleted = result.split()[-1] != "0"
-    return {
-        "company_guid": company_guid,
-        "tool_name": tool_name,
-        "deleted": deleted,
-    }
+    return {"company_guid": company_guid, "tool_name": tool_name, "deleted": deleted}
 
 @router.get("/tenants/{company_guid}/tools/mcp-spec")
 async def get_mcp_spec(company_guid: str):
