@@ -11,6 +11,9 @@ from src.api.providers import router as providers_router
 from src.api.admin_packs import router as admin_packs_router
 from src.tools.loader import ToolPluginLoader
 from src.api.admin_tools import router as admin_tools_router
+from src.api.admin_wallet import router as admin_wallet_router
+from src.api.tenant_wallet import router as tenant_wallet_router
+from src.services.scheduler import start_scheduler, stop_scheduler
 
 
 
@@ -20,7 +23,9 @@ async def lifespan(app: FastAPI):
     await init_redis()
     LLMRegistry.register_all()
     ToolPluginLoader.discover()
+    start_scheduler()
     yield
+    stop_scheduler()
     await close_redis()
     await DatabasePool.close()
 
@@ -36,6 +41,8 @@ app.include_router(chat_router)
 app.include_router(providers_router)
 app.include_router(admin_packs_router)
 app.include_router(admin_tools_router)
+app.include_router(admin_wallet_router)
+app.include_router(tenant_wallet_router)
 
 
 
