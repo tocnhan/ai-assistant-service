@@ -8,7 +8,6 @@ from src.cache.redis_client import init_redis, close_redis
 from src.middleware.tenant import HMACMiddleware
 from src.api.chat import router as chat_router
 from src.api.providers import router as providers_router
-import src.tools.search_tool
 from src.api.admin_packs import router as admin_packs_router
 from src.tools.loader import ToolPluginLoader
 from src.api.admin_tools import router as admin_tools_router
