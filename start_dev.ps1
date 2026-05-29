@@ -1,6 +1,6 @@
 # start_dev.ps1
 Write-Host "Starting Docker containers..." -ForegroundColor Cyan
-docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml --env-file .env up -d
 
 Write-Host "Waiting for Postgres to be healthy..." -ForegroundColor Cyan
 $maxAttempts = 20
@@ -20,8 +20,8 @@ if ($status -ne "healthy") {
 Write-Host "Running migrations..." -ForegroundColor Cyan
 uv run alembic upgrade head
 
-Write-Host "Seeding data..." -ForegroundColor Cyan
-uv run python scripts/dev_setup.py
+# Write-Host "Seeding data..." -ForegroundColor Cyan
+# uv run python scripts/dev_setup.py
 
 Write-Host "Starting app..." -ForegroundColor Green
 uv run uvicorn src.main:app --reload
