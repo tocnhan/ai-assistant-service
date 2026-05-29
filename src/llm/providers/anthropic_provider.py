@@ -19,13 +19,12 @@ def _get_langfuse():
 class AnthropicProvider(LLMProvider):
     def __init__(self, api_key: str):
         self.client = anthropic.AsyncAnthropic(api_key=api_key)
-        self.langfuse = None
 
     @property
     def langfuse(self):
-        if self._langfuse is None:
-            self._langfuse = _get_langfuse()
-        return self._langfuse
+        if 'langfuse' not in self.__dict__:
+            self.__dict__['langfuse'] = _get_langfuse()
+        return self.__dict__['langfuse']
 
     async def generate(self, model, messages, tools=None,
                        temperature=0.7, max_tokens=2048, **kwargs) -> LLMResponse:
@@ -58,26 +57,17 @@ class AnthropicProvider(LLMProvider):
         text = "".join(b.text for b in response.content if hasattr(b, "text"))
 
         if self.langfuse:
-            trace = self.langfuse.trace(name="anthropic.generate")
-            trace.generation(
-                name="generate",
+            self.langfuse.start_observation(
+                name="anthropic.generate",
                 model=model,
+                as_type="generation",
                 input=messages,
                 output=text,
-                usage={
-                    "input": usage.prompt_tokens,
-                    "output": usage.output_tokens,
-                    "total": usage.total_tokens,
-                },
-                latency=latency,
+                usage_details={"input": usage.prompt_tokens, "output": usage.output_tokens, "total": usage.total_tokens},
             )
 
-        return LLMResponse(
-            text=text,
-            usage=usage,
-            finish_reason=response.stop_reason or "stop",
-            raw_response={}
-        )
+        return LLMResponse(text=text, usage=usage,
+                           finish_reason=response.stop_reason or "stop", raw_response={})
 
     async def stream(self, model, messages, **kwargs) -> AsyncIterator[LLMStreamChunk]:
         system = ""
@@ -89,8 +79,6 @@ class AnthropicProvider(LLMProvider):
                 filtered.append(m)
 
         start = time.time()
-        trace = self.langfuse.trace(name="anthropic.stream") if self.langfuse else None
-
         async with self.client.messages.stream(
             model=model,
             max_tokens=kwargs.get("max_tokens", 2048),
@@ -110,18 +98,14 @@ class AnthropicProvider(LLMProvider):
                 total_tokens=u.input_tokens + u.output_tokens,
             )
 
-            if trace:
-                trace.generation(
-                    name="stream",
+            if self.langfuse:
+                self.langfuse.start_observation(
+                    name="anthropic.stream",
                     model=model,
+                    as_type="generation",
                     input=messages,
                     output="[streamed]",
-                    usage={
-                        "input": usage.prompt_tokens,
-                        "output": usage.output_tokens,
-                        "total": usage.total_tokens,
-                    },
-                    latency=int((time.time() - start) * 1000),
+                    usage_details={"input": usage.prompt_tokens, "output": usage.output_tokens, "total": usage.total_tokens},
                 )
 
             yield LLMStreamChunk(delta="", is_final=True, usage=usage)

@@ -26,6 +26,8 @@ class OpenAIProvider(LLMProvider):
 
     @property
     def langfuse(self):
+        if not hasattr(self, '_langfuse'):
+            self._langfuse = None
         if self._langfuse is None:
             self._langfuse = _get_langfuse()
         return self._langfuse
