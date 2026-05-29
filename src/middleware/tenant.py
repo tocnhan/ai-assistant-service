@@ -8,7 +8,7 @@ from src.core.config import settings
 from src.db.session import DatabasePool
 from src.services.audit import log_audit_event
 
-SKIP_PATHS = {"/health", "/ready", "/docs", "/openapi.json", "/redoc"}
+SKIP_PATHS = {"/health", "/ready", "/docs", "/openapi.json", "/redoc", "/metrics"}
 
 
 class HMACMiddleware:
