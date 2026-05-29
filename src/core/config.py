@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     DATABASE_URL: str = ""
     DATABASE_ADMIN_URL: str = ""
 
+    POSTGRES_DB: str = ""
+    POSTGRES_USER: str = ""
+    POSTGRES_PASSWORD: str = ""
+
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # Security
