@@ -2,7 +2,7 @@
 
 Backend microservice độc lập xử lý toàn bộ logic AI agent — từ intent classification, multi-turn conversation, tool calling đến SSE streaming response.
 
-**Multi-LLM Provider · Multi-Tenant · Industry Pack · Tool Plugin Architecture · Streaming SSE · Production-Ready**
+**Multi-LLM Provider · Multi-Tenant · Industry Pack · Tool Plugin Architecture · Streaming SSE · Credit Wallet · Observability · Production-Ready**
 
 ---
 
@@ -17,6 +17,8 @@ Backend microservice độc lập xử lý toàn bộ logic AI agent — từ in
 - [Cấu hình `.env`](#cấu-hình-env)
 - [API Overview](#api-overview)
 - [Tool Plugin System](#tool-plugin-system)
+- [Credit Wallet System](#credit-wallet-system)
+- [Observability](#observability)
 - [Test](#test)
 - [Kiến trúc bảo mật](#kiến-trúc-bảo-mật)
 - [Roadmap](#roadmap)
@@ -32,7 +34,7 @@ BE AI Service là một microservice riêng biệt, **không chia sẻ database 
 FE → BE Private (auth user) → BE AI Service (HMAC verify → classify → stream response)
 ```
 
-Tính năng hiện tại (Sprint 1-6):
+Tính năng hiện tại (Sprint 1-8):
 
 - **Multi-LLM provider**: Gemini, OpenAI, Anthropic, DeepSeek, Groq — swap bằng 1 dòng config, không sửa code
 - **Multi-tenant với RLS**: database-level isolation, fail-closed by default
@@ -43,6 +45,8 @@ Tính năng hiện tại (Sprint 1-6):
 - **Multi-turn memory**: Redis sliding window 10 turn, TTL 24h per conversation
 - **Tool Plugin Architecture**: dynamic plugin loading từ filesystem, config per-tenant từ DB, MCP-compatible spec export
 - **KB Multi-tenant**: Qdrant collection routing theo tenant (`{company_guid}_docs`), không chia sẻ KB giữa các tenant
+- **Credit Wallet**: ví credit thay quota cứng, atomic debit chống race condition (FOR UPDATE), markup configurable, monthly grant + reconcile job
+- **Observability**: Prometheus metrics tại `/metrics`, Langfuse tracing mọi LLM call (prompt, token, latency, cost)
 - **Usage tracking**: log mọi LLM call với cost ước tính per tenant
 - **Domain whitelist**: chống SSRF, kiểm tra allowed_domains per tenant
 
@@ -50,19 +54,21 @@ Tính năng hiện tại (Sprint 1-6):
 
 ## Tech Stack
 
-| Thành phần      | Công nghệ                         |
-|-----------------|-----------------------------------|
-| Language        | Python 3.11+                      |
-| Web framework   | FastAPI                           |
-| Agent framework | Pydantic AI                       |
-| Database        | PostgreSQL 15 + TimescaleDB       |
-| Cache / Memory  | Redis 7                           |
-| Vector DB       | Qdrant                            |
-| Template Engine | Jinja2                            |
-| Migration       | Alembic                           |
-| Package manager | uv                                |
-| Container       | Docker + Docker Compose           |
-| LLM Tracing     | Langfuse (self-hosted, Sprint 8)  |
+| Thành phần      | Công nghệ                                     |
+|-----------------|------------------------------------------------|
+| Language        | Python 3.11+                                   |
+| Web framework   | FastAPI                                        |
+| Agent framework | Pydantic AI                                    |
+| Database        | PostgreSQL 15 + TimescaleDB                    |
+| Cache / Memory  | Redis 7                                        |
+| Vector DB       | Qdrant                                         |
+| Template Engine | Jinja2                                         |
+| Migration       | Alembic                                        |
+| Package manager | uv                                             |
+| Container       | Docker + Docker Compose                        |
+| Metrics         | Prometheus (prometheus-fastapi-instrumentator)  |
+| LLM Tracing     | Langfuse (Cloud)                               |
+| Scheduler       | APScheduler (monthly grant + reconcile)         |
 
 ---
 
@@ -80,8 +86,10 @@ ai-assistant-service/
 │   ├── api/
 │   │   ├── chat.py                      # POST /chat, POST /chat/stream (SSE)
 │   │   ├── providers.py                 # GET /providers
-│   │   ├── admin_packs.py               # Admin: CRUD pack, assign tenant, upsert template
-│   │   └── admin_tools.py               # Admin: CRUD tool config per-tenant, MCP spec export
+│   │   ├── admin_packs.py              # Admin: CRUD pack, assign tenant, upsert template
+│   │   ├── admin_tools.py              # Admin: CRUD tool config per-tenant, MCP spec export
+│   │   ├── admin_wallet.py             # Admin: wallet topup, grant, usage, anomalies
+│   │   └── tenant_wallet.py            # Tenant: self-serve wallet, usage, transactions
 │   ├── cache/
 │   │   └── redis_client.py              # Redis connection + get_redis()
 │   ├── core/
@@ -94,9 +102,9 @@ ai-assistant-service/
 │   │   ├── selector.py                  # ModelSelector — role-based provider selection
 │   │   ├── pricing.py                   # Cost calculator
 │   │   └── providers/
-│   │       ├── gemini.py
-│   │       ├── openai_provider.py
-│   │       ├── anthropic_provider.py
+│   │       ├── gemini.py                # + Langfuse tracing
+│   │       ├── openai_provider.py       # + Langfuse wrapper (auto-cover Groq/DeepSeek)
+│   │       ├── anthropic_provider.py    # + Langfuse tracing
 │   │       ├── deepseek_provider.py
 │   │       └── groq_provider.py
 │   ├── memory/
@@ -110,24 +118,31 @@ ai-assistant-service/
 │   ├── services/
 │   │   ├── audit.py                     # Security event logger
 │   │   ├── usage_logger.py              # Async LLM usage logger
-│   │   ├── tool_config.py               # Load + configure tools per-tenant từ DB
-│   │   └── qdrant_search.py             # Vector search
+│   │   ├── tool_config.py              # Load + configure tools per-tenant từ DB
+│   │   ├── wallet.py                   # WalletService: check_balance, debit, credit, grant_monthly
+│   │   ├── wallet_gate.py             # WalletGate: check trước / debit sau mỗi LLM call
+│   │   ├── scheduler.py               # APScheduler: monthly_grant_job + reconcile_job
+│   │   └── qdrant_search.py            # Vector search
 │   └── tools/
 │       ├── base.py                      # BaseTool, ToolRegistry, configure(), to_mcp_spec()
 │       ├── loader.py                    # ToolPluginLoader — dynamic discover + register
-│       └── plugins/                     # Tool plugins — thêm plugin mới vào đây
+│       └── plugins/
 │           ├── __init__.py
 │           ├── http_api_call.py         # Gọi external HTTP API per-tenant
 │           ├── search_knowledge.py      # Qdrant vector search, collection per-tenant
 │           └── web_search.py            # Web search qua Tavily API
 ├── tests/
 │   ├── integration/
-│   │   └── test_rls.py                  # RLS isolation test
+│   │   ├── test_rls.py                  # RLS isolation test
+│   │   └── test_domain_check.py         # Domain whitelist test
+│   ├── security/
+│   │   └── test_security.py             # Cross-tenant, HMAC replay, SSRF tests
 │   └── unit/
 │       ├── test_packs.py
 │       ├── test_classifier.py
 │       ├── test_memory.py
 │       ├── test_tools.py
+│       ├── test_wallet.py               # Credit wallet unit tests
 │       ├── test_model_selector.py
 │       ├── test_hmac_middleware.py
 │       ├── test_openai_provider.py
@@ -139,7 +154,8 @@ ai-assistant-service/
 │       ├── 0689772182af_002_add_allowed_domains.py
 │       ├── 8b32f1048493_003_sprint3_schema.py
 │       ├── 5228d1a84c24_004_sprint5_prompt_templates.py
-│       └── d365ee120fbf_006_sprint6_tool_plugin.py
+│       ├── d365ee120fbf_006_sprint6_tool_plugin.py
+│       └── 9d9c0f8331ef_007_sprint7_credit_wallet.py
 ├── scripts/
 │   ├── gen_hmac.py                      # Generate HMAC signature để test
 │   ├── seed_pricing.py                  # Seed LLM pricing (5 providers)
@@ -150,9 +166,13 @@ ai-assistant-service/
 │   ├── check_domains.py                 # Kiểm tra allowed_domains
 │   ├── check_usage.py                   # Xem cost + usage từ DB
 │   └── test_body.json                   # Body mẫu để test API
+├── INCIDENT_RUNBOOK.md                  # Xử lý sự cố production
+├── ONBOARD_NEW_TENANT.md               # Quy trình onboard tenant mới
+├── INDUSTRY_PACK_GUIDE.md              # Hướng dẫn tạo/quản lý pack
 ├── HOW_TO_BUILD_TOOL_PLUGIN.md          # Hướng dẫn tạo tool plugin mới
 ├── docker/
 │   └── docker-compose.yml
+├── start_dev.ps1                        # Script chạy toàn bộ môi trường dev
 ├── conftest.py
 ├── pyproject.toml
 └── README.md
@@ -176,11 +196,6 @@ ai-assistant-service/
 ```bash
 git clone <repo-url>
 cd ai-assistant-service
-
-# Cài uv nếu chưa có
-pip install uv
-
-# Cài dependencies
 uv sync
 ```
 
@@ -194,52 +209,37 @@ cp .env.example .env
 
 ### 3. Start Docker containers
 
+> **Lưu ý:** file `.env` nằm ở thư mục gốc, còn `docker-compose.yml` nằm trong `docker/`. Phải dùng cờ `--env-file`:
+
 ```bash
-docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml --env-file .env up -d
 ```
 
-### 4. Chạy migration
+### 4. Tạo user ai_app (nếu reset volume)
+
+```bash
+docker exec -it docker-postgres-1 psql -U ai_admin -d ai_db -c "
+  CREATE USER ai_app WITH PASSWORD 'your-password';
+  GRANT CONNECT ON DATABASE ai_db TO ai_app;
+"
+```
+
+### 5. Chạy migration
 
 ```bash
 uv run alembic upgrade head
 ```
 
-### 5. Seed data
+### 6. Seed data
 
 ```bash
 uv run python scripts/seed_pricing.py
 uv run python scripts/seed_test_data.py
 uv run python scripts/seed_packs.py
-uv run python scripts/seed_tool_definitions.py   # Sprint 6 — seed tool plugins
+uv run python scripts/seed_tool_definitions.py
 ```
 
-### 6. Assign pack cho tenant test
-
-```bash
-# Vào psql
-docker exec -it docker-postgres-1 psql -U postgres -d ai_db
-
-# Assign pack
-INSERT INTO ai_service.tenant_pack_assignments (company_guid, pack_id, overrides)
-VALUES ('<company-guid>', 'tourism@1.0.0', '{}')
-ON CONFLICT (company_guid) DO UPDATE SET pack_id = 'tourism@1.0.0';
-```
-
-### 7. (Optional) Enable tool cho tenant
-
-```bash
-# Set config http_api_call cho tenant
-curl -X PUT http://localhost:8000/admin/tenants/<company_guid>/tools/http_api_call \
-  -H "Content-Type: application/json" \
-  -H "X-Company-GUID: <company_guid>" \
-  -H "X-User-GUID: <user_guid>" \
-  -H "X-Domain: <domain>" \
-  -H "X-Timestamp: <timestamp>" \
-  -H "X-Signature: <signature>" \
-  -d '{"is_enabled": true, "config": {"base_url": "https://your-api.com", "timeout": 15}}'
-```
-
-### 8. Start app
+### 7. Start app
 
 ```bash
 uv run uvicorn src.main:app --reload
@@ -251,13 +251,11 @@ Mở `http://localhost:8000/docs` để xem Swagger UI.
 
 ## Chạy dev hàng ngày
 
-```bash
-# 1. Start Docker
-docker compose -f docker/docker-compose.yml up -d
-
-# 2. Start app
-uv run uvicorn src.main:app --reload
+```powershell
+.\start_dev.ps1
 ```
+
+Script tự động: start Docker → chờ Postgres healthy → chạy migration → start app.
 
 ---
 
@@ -266,11 +264,13 @@ uv run uvicorn src.main:app --reload
 ```env
 # App
 APP_ENV=development
-LOG_LEVEL=INFO
 
 # Database
 DATABASE_URL=postgresql+asyncpg://ai_app:your-password@127.0.0.1/ai_db
 DATABASE_ADMIN_URL=postgresql://ai_admin:your-password@127.0.0.1/ai_db
+POSTGRES_USER=ai_admin
+POSTGRES_PASSWORD=your-password
+POSTGRES_DB=ai_db
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
@@ -288,6 +288,11 @@ GROQ_API_KEY=
 # External
 QDRANT_URL=http://localhost:6333
 QDRANT_API_KEY=
+
+# Langfuse (observability)
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=https://cloud.langfuse.com
 ```
 
 ---
@@ -296,7 +301,7 @@ QDRANT_API_KEY=
 
 ### Authentication
 
-Mọi request (trừ `/health`, `/ready`, `/docs`) phải có headers:
+Mọi request (trừ `/health`, `/ready`, `/docs`, `/openapi.json`, `/redoc`, `/metrics`) phải có headers:
 
 | Header           | Mô tả                                                     |
 |------------------|-----------------------------------------------------------|
@@ -307,21 +312,13 @@ Mọi request (trừ `/health`, `/ready`, `/docs`) phải có headers:
 | `X-Signature`    | HMAC-SHA256(secret, timestamp + body)                     |
 | `X-Request-Id`   | UUID để trace (optional)                                  |
 
-Generate signature để test:
-
-```bash
-# Sửa scripts/test_body.json với body muốn test
-uv run python scripts/gen_hmac.py
-```
-
-> **Lưu ý khi test bằng curl.exe trên Windows:** mọi request dù là GET cũng cần truyền `-d "{}"` để HMAC tính đúng body.
-
 ### Endpoints
 
 | Method   | Path                                          | Mô tả                                            |
 |----------|-----------------------------------------------|--------------------------------------------------|
 | `GET`    | `/health`                                     | Liveness check                                   |
 | `GET`    | `/ready`                                      | Readiness check                                  |
+| `GET`    | `/metrics`                                    | Prometheus metrics                               |
 | `GET`    | `/providers`                                  | Danh sách LLM provider đang active               |
 | `POST`   | `/chat`                                       | Chat non-streaming                               |
 | `POST`   | `/chat/stream`                                | Chat SSE streaming                               |
@@ -331,11 +328,19 @@ uv run python scripts/gen_hmac.py
 | `POST`   | `/admin/tenants/assign-pack`                  | Gán pack cho tenant                              |
 | `POST`   | `/admin/packs/templates`                      | Tạo/cập nhật prompt template                     |
 | `GET`    | `/admin/packs/{pack_id}/templates`            | Xem templates của pack                           |
-| `GET`    | `/admin/tools`                                | Danh sách tất cả tool plugin trong hệ thống      |
+| `GET`    | `/admin/tools`                                | Danh sách tất cả tool plugin                     |
 | `GET`    | `/admin/tenants/{company_guid}/tools`         | Xem config tool của 1 tenant                     |
 | `PUT`    | `/admin/tenants/{company_guid}/tools/{name}`  | Bật/tắt + set config tool cho tenant             |
 | `DELETE` | `/admin/tenants/{company_guid}/tools/{name}`  | Xóa config tool của tenant (về default)          |
 | `GET`    | `/admin/tenants/{company_guid}/tools/mcp-spec`| Export MCP-compatible tool spec cho tenant       |
+| `GET`    | `/admin/tenants/{company_guid}/wallet`        | Xem ví của tenant                                |
+| `POST`   | `/admin/tenants/{company_guid}/wallet/topup`  | Nạp credit                                       |
+| `POST`   | `/admin/tenants/{company_guid}/wallet/grant`  | Cấp monthly grant thủ công                       |
+| `GET`    | `/admin/tenants/{company_guid}/usage`         | Usage + cost 30 ngày                             |
+| `GET`    | `/admin/usage/anomalies`                      | Tenant tăng đột biến > 3x baseline               |
+| `GET`    | `/tenant/wallet`                              | Tenant tự xem ví                                 |
+| `GET`    | `/tenant/usage`                               | Tenant tự xem usage 30 ngày                      |
+| `GET`    | `/tenant/transactions`                        | Tenant tự xem lịch sử giao dịch credit           |
 
 ### POST /chat/stream (SSE)
 
@@ -359,42 +364,11 @@ data: {"type": "delta", "delta": " muốn đặt phòng"}
 data: {"type": "done", "latency_ms": 823, "pack_id": "tourism@1.0.0", "usage": {...}}
 ```
 
-| Type     | Mô tả                                    |
-|----------|------------------------------------------|
-| `intent` | Intent đã classify được                  |
-| `delta`  | Token mới từ LLM                         |
-| `done`   | Kết thúc, kèm latency + usage + pack_id  |
-| `error`  | Lỗi trong quá trình xử lý               |
-
 ---
 
 ## Tool Plugin System
 
-Sprint 6 giới thiệu **Tool Plugin Architecture** — tools không còn hardcode mà là plugin class có thể config per-tenant.
-
-### Kiến trúc
-
-```
-App startup
-    └── ToolPluginLoader.discover()
-            └── scan src/tools/plugins/
-                    └── auto-register mọi subclass của BaseTool
-
-Request đến
-    └── Orchestrator
-            └── ToolConfigService.get_tools_for_tenant()
-                    └── query tenant_tool_configs từ DB
-                            └── tool.configure(config) → instance per-tenant
-```
-
-### Nguyên tắc quan trọng
-
-- **Code plugin nằm trên filesystem** — DB chỉ chứa metadata + config, KHÔNG lưu Python code vào DB
-- **Cùng plugin, khác config** — tenant du lịch và F&B dùng chung `http_api_call` nhưng trỏ về 2 API khác nhau
-- **Tenant isolation** — tenant A enable tool X, tenant B không enable → agent B không thấy tool X
-- **KB isolation** — `search_knowledge` tự động route về Qdrant collection `{company_guid}_docs`
-
-### Tool plugins có sẵn
+Xem **[HOW_TO_BUILD_TOOL_PLUGIN.md](./HOW_TO_BUILD_TOOL_PLUGIN.md)** và **[INDUSTRY_PACK_GUIDE.md](./INDUSTRY_PACK_GUIDE.md)** cho chi tiết.
 
 | Plugin | Mô tả | Config cần thiết |
 |--------|-------|-----------------|
@@ -402,126 +376,70 @@ Request đến
 | `search_knowledge` | Vector search Qdrant KB | `collection` (optional, auto-fallback) |
 | `web_search` | Web search qua Tavily | `api_key`, `max_results` |
 
-### Enable tool cho tenant
-
-```bash
-# Bật http_api_call cho tenant F&B
-curl -X PUT /admin/tenants/<guid>/tools/http_api_call \
-  -d '{"is_enabled": true, "config": {"base_url": "https://pos.fnb.vn", "timeout": 15}}'
-
-# Xem MCP spec — danh sách tool enabled cho tenant
-curl /admin/tenants/<guid>/tools/mcp-spec
-```
-
-### Tạo tool plugin mới
-
-Xem hướng dẫn chi tiết tại **[HOW_TO_BUILD_TOOL_PLUGIN.md](./HOW_TO_BUILD_TOOL_PLUGIN.md)**.
-
-Tóm tắt 6 bước:
-1. Tạo file `src/tools/plugins/ten_tool.py`, kế thừa `BaseTool`
-2. Implement `configure()`, `_run()`
-3. Seed vào `tool_definitions` qua `scripts/seed_tool_definitions.py`
-4. Thêm vào `tool_whitelist` của pack
-5. Config cho tenant qua PUT endpoint
-6. Restart app — `ToolPluginLoader` tự discover
-
 ---
 
-## Industry Pack System
+## Credit Wallet System
 
-Pack là đơn vị config cho 1 vertical, immutable theo version.
+Thay thế quota cứng bằng ví credit linh hoạt. 1 credit ≈ $0.01 chi phí, nhân hệ số markup configurable (default 1.5x).
 
-```
-Pack tourism@1.0.0
-├── intents: [general_chat, search_knowledge, api_action, summarize]
-├── tool_whitelist: [search_knowledge, http_api_call]
-├── default_models: {classifier: groq/llama, executor: deepseek/deepseek-chat}
-└── prompt_templates:
-    ├── general_chat:system → "Bạn là trợ lý của {{ tenant_name }}..."
-    └── api_action:system   → "Bạn hỗ trợ đặt phòng cho {{ tenant_name }}..."
-```
+### Kiến trúc
 
-**Onboard khách mới = assign pack + (optional) override + enable tools** — không cần deploy lại.
+- **tenant_wallets**: 1 row per tenant — balance, monthly_grant, markup_rate, is_hard_stop
+- **credit_transactions**: hypertable — lịch sử mọi giao dịch (debit, topup, monthly_grant, refund)
+- **credit_packages**: danh mục gói nạp tiền
 
-**Tenant override:**
-
-```json
-{
-  "prompts": {
-    "general_chat:system": "Prompt riêng của tenant này..."
-  },
-  "default_models": {
-    "executor": {"provider": "anthropic", "model": "claude-haiku-4-5"}
-  },
-  "extra_tools": ["web_search"]
-}
-```
-
----
-
-## Multi-Provider Config
-
-Đổi provider mặc định trong `src/llm/selector.py`:
+### Atomic debit chống race condition
 
 ```python
-DEFAULT_MODELS = {
-    "classifier": ("groq", "llama-3.1-8b-instant"),   # nhanh, rẻ
-    "executor":   ("deepseek", "deepseek-chat"),       # balance
-    "summarizer": ("deepseek", "deepseek-chat"),       # rẻ
-    "premium":    ("anthropic", "claude-haiku-4-5"),   # quality cao
-}
+SELECT balance FROM tenant_wallets WHERE company_guid = $1 FOR UPDATE
+# → khóa dòng, request khác phải đợi
+UPDATE tenant_wallets SET balance = balance - charged
+INSERT INTO credit_transactions (...)
 ```
+
+### Background jobs (APScheduler)
+
+- **monthly_grant_job**: mùng 1 hàng tháng lúc 00:00 — cấp credit cho tenant có monthly_grant > 0
+- **reconcile_job**: mỗi giờ — đối soát credit_transactions vs llm_usage_log, cảnh báo nếu lệch
+
+---
+
+## Observability
+
+### Prometheus Metrics
+
+Endpoint `/metrics` xuất số liệu: request count, latency histogram, request/response size.
+
+```python
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+```
+
+### Langfuse Tracing
+
+Mọi LLM call được trace lên Langfuse Cloud: prompt, output, token count, latency, model, cost.
+
+- **OpenAI/Groq/DeepSeek**: dùng `langfuse.openai.AsyncOpenAI` wrapper (auto-trace)
+- **Gemini/Anthropic**: dùng `start_observation(as_type="generation", ...)` manual
 
 ---
 
 ## Test
 
-### Chạy unit tests
+### Chạy tests
 
 ```bash
-uv run pytest tests/unit/ -v
+uv run pytest tests/ -v          # tất cả (55 tests)
+uv run pytest tests/unit/ -v     # unit tests
+uv run pytest tests/security/ -v # security tests
 ```
 
-### RLS isolation test
+### Test coverage
 
-```bash
-uv run pytest tests/integration/test_rls.py -v
-```
-
-Test này verify tenant B không đọc được data của tenant A. **Phải pass 100% trước khi deploy.**
-
-### Multi-turn conversation test
-
-```bash
-uv run python scripts/test_chat.py
-```
-
-### Test API thủ công
-
-```bash
-# Bước 1: Sửa body test
-echo '{"message": "xin chao"}' > scripts/test_body.json
-
-# Bước 2: Generate HMAC
-uv run python scripts/gen_hmac.py
-
-# Bước 3: Gọi stream endpoint
-curl.exe -X POST http://localhost:8000/chat/stream \
-  -H "Content-Type: application/json" \
-  -H "X-Company-GUID: <guid>" \
-  -H "X-User-GUID: <user-guid>" \
-  -H "X-Domain: <domain>" \
-  -H "X-Timestamp: <timestamp>" \
-  -H "X-Signature: <signature>" \
-  -H "X-Request-Id: req-001" \
-  -d "@scripts/test_body.json"
-```
-
-### Xem usage + cost
-
-```bash
-uv run python scripts/check_usage.py
-```
+| Loại | Số test | Kiểm tra |
+|------|---------|----------|
+| Unit | 39 | Providers, classifier, memory, HMAC, pricing, model selector, wallet |
+| Integration | 4 | RLS isolation, domain whitelist |
+| Security | 6 | Cross-tenant wallet/transactions, HMAC replay, body tampering, SSRF |
 
 ---
 
@@ -536,26 +454,6 @@ Layer 5 (Tool)     : tool config per-tenant, tenant A không đọc config của
 Layer 6 (Audit)    : log mọi security event vào audit_log
 ```
 
-### HMAC verification
-
-```
-signature = HMAC-SHA256(HMAC_SECRET, f"{timestamp}{request_body}")
-```
-
-- `HMAC_SECRET` — khóa cố định, lưu trong `.env`, chia sẻ out-of-band với client
-- Client tự gen `timestamp` + `signature` mỗi request — server verify lại
-- Timestamp window 5 phút — chống replay attack
-- `hmac.compare_digest` — chống timing attack
-- Pure ASGI middleware — compatible với SSE streaming
-
-### Multi-tenant isolation
-
-- RLS policy filter tự động tất cả queries theo `app.current_tenant`
-- `ai_app` role không có `BYPASSRLS`
-- `allowed_domains` table kiểm tra domain whitelist chống SSRF
-- `tenant_tool_configs` có RLS — tenant A không đọc được config tool của tenant B
-- Qdrant collection routing `{company_guid}_docs` — KB hoàn toàn isolated
-
 ---
 
 ## Roadmap
@@ -568,87 +466,69 @@ signature = HMAC-SHA256(HMAC_SECRET, f"{timestamp}{request_body}")
 | Sprint 4 — Agent Runtime + SSE           | 7-8   | ✅ Done        |
 | Sprint 5 — Industry Pack + Template Engine| 9-10  | ✅ Done        |
 | Sprint 6 — Tool Plugin + KB Multi-tenant | 11-12 | ✅ Done        |
-| Sprint 7 — Credit Wallet + Admin         | 13-14 | ⏳ Pending     |
-| Sprint 8 — Observability + Prod          | 15-16 | ⏳ Pending     |
+| Sprint 7 — Credit Wallet + Admin         | 13-14 | ✅ Done        |
+| Sprint 8 — Observability + Prod          | 15-16 | ✅ Done        |
 
 ---
 
 ## Troubleshooting
 
+### Postgres role/password errors
+
+Volume cũ bị stale. Reset:
+```bash
+docker compose -f docker/docker-compose.yml --env-file .env down
+docker volume rm docker_postgres_data
+docker compose -f docker/docker-compose.yml --env-file .env up -d
+```
+Sau đó tạo lại user ai_app, chạy migration, seed data.
+
+### Extra inputs are not permitted (pydantic)
+
+`.env` có biến mà `Settings` chưa khai báo. Thêm biến vào `src/core/config.py`.
+
+### permission denied for table
+
+`ai_app` chưa được GRANT. Sửa tạm:
+```bash
+docker exec -it docker-postgres-1 psql -U ai_admin -d ai_db -c "GRANT SELECT ON ai_service.<table> TO ai_app;"
+```
+Sửa gốc: thêm GRANT vào file migration.
+
 ### HMAC Invalid Signature
 
-- Timestamp phải trong vòng 5 phút — gen lại nếu quá hạn
-- Body phải giống hệt lúc gen — dùng `@scripts/test_body.json`, không dùng inline `-d '{...}'`
-- GET request trên Windows cần `-d "{}"` để HMAC tính đúng
-- Chạy lại `uv run python scripts/gen_hmac.py`
+- Timestamp phải trong vòng 5 phút — gen lại
+- Body phải giống hệt lúc gen — dùng `@scripts/test_body.json`
+- GET request trên Windows cần `-d "{}"`
 
 ### Domain not allowed
 
-Tenant chưa có domain trong `allowed_domains`. Thêm vào DB:
-```bash
-uv run python fix_domain.py
-```
+Tenant chưa có domain trong `allowed_domains`. Thêm vào DB.
 
-### Tool không xuất hiện trong MCP spec
+### Langfuse: client initialized without public_key
 
-- Kiểm tra tool đã được `enable` cho tenant chưa qua `GET /admin/tenants/<guid>/tools`
-- `is_enabled: null` nghĩa là chưa config — gọi PUT endpoint để enable
-- Kiểm tra `tool_name` trong pack `tool_whitelist` có khớp với tên plugin không
-
-### Tool plugin không load khi startup
-
-Kiểm tra log startup — nếu không thấy `tool.plugin.registered`:
-- Class có kế thừa `BaseTool` không?
-- `name` có bị để rỗng không?
-- File có nằm đúng trong `src/tools/plugins/` không?
-- Import trong file có lỗi syntax không?
-
-### search_knowledge tìm sai KB
-
-Kiểm tra Qdrant collection có tồn tại không:
-```
-collection name: {company_guid}_docs
-```
-Nếu chưa có thì cần upload document cho tenant đó trước.
+Restart app (lru_cache giữ settings cũ).
 
 ### Provider 503 / rate limit
 
-Đổi provider trong `src/llm/selector.py` → đổi `executor` sang provider khác → restart app.
+Đổi provider trong `src/llm/selector.py` → restart app.
 
-### Redis connection refused
-
-```bash
-docker compose -f docker/docker-compose.yml up -d
-```
-
-### Data mất sau restart
+### Pack load sai / fallback generic
 
 ```bash
-uv run python scripts/seed_test_data.py
-uv run python scripts/seed_pricing.py
-uv run python scripts/seed_packs.py
-uv run python scripts/seed_tool_definitions.py
-```
-
-### Pack không load đúng
-
-Xóa Redis cache của pack rồi thử lại:
-```bash
+# Kiểm tra tenant có pack chưa
+docker exec -it docker-postgres-1 psql -U ai_admin -d ai_db -c "
+  SELECT * FROM ai_service.tenant_pack_assignments WHERE company_guid = '<guid>';
+"
+# Xóa cache pack
 docker exec -it docker-redis-1 redis-cli DEL "pack:tourism@1.0.0"
 ```
 
-### Tenant dùng wrong pack / fallback generic
+### Data mất sau reset volume
 
-```sql
-SELECT * FROM ai_service.tenant_pack_assignments WHERE company_guid = '<guid>';
+```bash
+uv run python scripts/seed_pricing.py
+uv run python scripts/seed_test_data.py
+uv run python scripts/seed_packs.py
+uv run python scripts/seed_tool_definitions.py
 ```
-
-Nếu không có row → assign pack lại qua `/admin/tenants/assign-pack`.
-
-### `unrecognized configuration parameter app.current_tenant`
-
-Cần chạy `SET LOCAL` trong transaction. Xem `src/db/session.py`.
-
-### RLS error khi gọi tool config
-
-Đảm bảo `set_config('app.current_tenant', ...)` và query nằm trong cùng 1 transaction. Xem `src/services/tool_config.py`.
