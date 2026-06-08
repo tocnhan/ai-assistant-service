@@ -1,13 +1,13 @@
 # Industry Pack Guide
 
-## Pack là gì?
+## What is a pack?
 
-Pack là config cho 1 vertical, immutable theo version. Tenant chọn pack khi onboard.
-Onboard khách mới = assign pack + enable tools = xong, không cần code.
+A pack is the configuration for a single vertical, immutable per version. Tenants choose a pack when they're onboarded.
+Onboarding a new client = assign a pack + enable tools = done, no code required.
 
 ---
 
-## Cấu trúc 1 pack
+## Structure of a pack
 
 ```
 Pack tourism@1.0.0
@@ -23,19 +23,19 @@ Pack tourism@1.0.0
 
 ---
 
-## Pack có sẵn
+## Available packs
 
 | Pack | Vertical | Intents |
 |---|---|---|
-| `tourism@1.0.0` | Du lịch, khách sạn | general_chat, search_knowledge, api_action, summarize |
-| `generic@1.0.0` | Tổng quát | general_chat, web_search |
-| `spa_booking@1.0.0` | Spa, clinic | general_chat, api_action |
+| `tourism@1.0.0` | Tourism, hotels | general_chat, search_knowledge, api_action, summarize |
+| `generic@1.0.0` | General-purpose | general_chat, web_search |
+| `spa_booking@1.0.0` | Spa, clinics | general_chat, api_action |
 
 ---
 
-## Tạo pack mới
+## Creating a new pack
 
-### Bước 1 — Tạo pack qua API
+### Step 1 — Create the pack via the API
 
 ```bash
 curl -X POST http://localhost:8000/admin/packs \
@@ -52,7 +52,7 @@ curl -X POST http://localhost:8000/admin/packs \
   }'
 ```
 
-### Bước 2 — Tạo prompt templates
+### Step 2 — Create prompt templates
 
 ```bash
 curl -X POST http://localhost:8000/admin/packs/templates \
@@ -61,20 +61,20 @@ curl -X POST http://localhost:8000/admin/packs/templates \
     "pack_id": "fnb@1.0.0",
     "intent": "general_chat",
     "role": "system",
-    "content": "Bạn là trợ lý của {{ tenant_name }}, chuyên hỗ trợ khách hàng F&B."
+    "content": "You are the assistant for {{ tenant_name }}, specialized in helping F&B customers."
   }'
 ```
 
-**Biến có thể dùng trong template:**
+**Variables available in templates:**
 
-| Biến | Mô tả |
+| Variable | Description |
 |---|---|
-| `{{ tenant_name }}` | Tên tenant |
-| `{{ today }}` | Ngày hôm nay |
-| `{{ current_screen }}` | Màn hình hiện tại của user |
-| `{{ business_rules }}` | Rule riêng của tenant |
+| `{{ tenant_name }}` | Tenant name |
+| `{{ today }}` | Today's date |
+| `{{ current_screen }}` | The user's current screen |
+| `{{ business_rules }}` | The tenant's custom rules |
 
-### Bước 3 — Assign cho tenant
+### Step 3 — Assign it to a tenant
 
 ```bash
 curl -X POST http://localhost:8000/admin/tenants/assign-pack \
@@ -84,14 +84,14 @@ curl -X POST http://localhost:8000/admin/tenants/assign-pack \
 
 ---
 
-## Tenant override
+## Tenant overrides
 
-Tenant có thể override pack default mà không ảnh hưởng pack gốc:
+A tenant can override the pack defaults without affecting the original pack:
 
 ```json
 {
   "prompts": {
-    "general_chat:system": "Prompt riêng của tenant này..."
+    "general_chat:system": "This tenant's custom prompt..."
   },
   "default_models": {
     "executor": {"provider": "anthropic", "model": "claude-haiku-4-5"}
@@ -104,19 +104,19 @@ Tenant có thể override pack default mà không ảnh hưởng pack gốc:
 
 ## Version management
 
-Pack immutable — muốn thay đổi phải tạo version mới:
+Packs are immutable — to make changes you must create a new version:
 
 ```
 tourism@1.0.0  →  tourism@1.1.0  →  tourism@2.0.0
 ```
 
-Tenant pin version cụ thể, muốn upgrade phải explicit assign lại.
+A tenant pins a specific version; upgrading requires explicitly re-assigning the pack.
 
 ---
 
-## Xóa cache pack
+## Clearing the pack cache
 
-Sau khi update template, xóa Redis cache để có hiệu lực ngay:
+After updating a template, clear the Redis cache to make it take effect immediately:
 
 ```bash
 docker exec -it docker-redis-1 redis-cli DEL "pack:tourism@1.0.0"
