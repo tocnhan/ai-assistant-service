@@ -1,6 +1,6 @@
 # Onboard New Tenant
 
-## Bước 1 — Tạo tenant
+## Step 1 — Create the tenant
 
 ```bash
 docker exec -it docker-postgres-1 psql -U ai_admin -d ai_db -c "
@@ -9,7 +9,7 @@ VALUES ('<guid>', 'https://tenant-domain.com', 'pro');
 "
 ```
 
-## Bước 2 — Thêm allowed domain
+## Step 2 — Add the allowed domain
 
 ```bash
 docker exec -it docker-postgres-1 psql -U ai_admin -d ai_db -c "
@@ -18,7 +18,7 @@ VALUES ('<guid>', 'https://tenant-domain.com', TRUE);
 "
 ```
 
-## Bước 3 — Assign industry pack
+## Step 3 — Assign an industry pack
 
 ```bash
 curl -X POST http://localhost:8000/admin/tenants/assign-pack \
@@ -26,9 +26,9 @@ curl -X POST http://localhost:8000/admin/tenants/assign-pack \
   -d '{"company_guid": "<guid>", "pack_id": "tourism@1.0.0"}'
 ```
 
-Pack có sẵn: `tourism@1.0.0`, `generic@1.0.0`, `spa_booking@1.0.0`
+Available packs: `tourism@1.0.0`, `generic@1.0.0`, `spa_booking@1.0.0`
 
-## Bước 4 — Tạo wallet
+## Step 4 — Set up the wallet
 
 ```bash
 curl -X POST http://localhost:8000/admin/tenants/<guid>/wallet/topup \
@@ -36,7 +36,7 @@ curl -X POST http://localhost:8000/admin/tenants/<guid>/wallet/topup \
   -d '{"credits": 10000, "note": "initial grant"}'
 ```
 
-## Bước 5 — Enable tools (optional)
+## Step 5 — Enable tools (optional)
 
 ```bash
 curl -X PUT http://localhost:8000/admin/tenants/<guid>/tools/http_api_call \
@@ -44,13 +44,13 @@ curl -X PUT http://localhost:8000/admin/tenants/<guid>/tools/http_api_call \
   -d '{"is_enabled": true, "config": {"base_url": "https://api.tenant.com", "timeout": 15}}'
 ```
 
-## Bước 6 — Test
+## Step 6 — Test
 
 ```bash
 uv run python scripts/gen_hmac.py
-# Dùng signature vừa gen để test /chat/stream
+# Use the generated signature to test /chat/stream
 ```
 
 ## Done ✅
 
-Tenant sẵn sàng, không cần deploy lại.
+The tenant is ready to go — no redeploy needed.

@@ -1,18 +1,18 @@
 # Incident Runbook — BE AI Assistant Service
 
-## 1. App không start được
+## 1. App fails to start
 
-**Triệu chứng:** uvicorn crash ngay khi khởi động.
+**Symptom:** uvicorn crashes immediately on startup.
 
 **Checklist:**
 ```bash
-# Kiểm tra postgres + redis có healthy không
+# Check whether postgres + redis are healthy
 docker ps
 
-# Kiểm tra .env có đủ biến không
+# Check that .env has all required variables
 cat .env
 
-# Chạy migration nếu thiếu schema
+# Run migrations if the schema is missing
 uv run alembic upgrade head
 ```
 
@@ -20,11 +20,11 @@ uv run alembic upgrade head
 
 ## 2. password authentication failed
 
-**Triệu chứng:** `asyncpg.exceptions.InvalidPasswordError`
+**Symptom:** `asyncpg.exceptions.InvalidPasswordError`
 
 **Fix:**
 ```bash
-# Reset volume và tạo lại
+# Reset the volume and recreate everything
 docker compose -f docker/docker-compose.yml --env-file .env down
 docker volume rm docker_postgres_data
 docker compose -f docker/docker-compose.yml --env-file .env up -d
@@ -39,13 +39,13 @@ uv run python scripts/seed_tool_definitions.py
 
 ## 3. HMAC Invalid Signature
 
-**Triệu chứng:** `401 INVALID_SIGNATURE`
+**Symptom:** `401 INVALID_SIGNATURE`
 
 **Checklist:**
-- Timestamp phải trong vòng 5 phút — gen lại
-- Body phải giống hệt lúc sign — dùng `@scripts/test_body.json`
-- GET request trên Windows cần `-d "{}"`
-- `HMAC_SECRET` trong `.env` phải khớp với client
+- The timestamp must be within 5 minutes — regenerate it
+- The body must be byte-identical to the one used for signing — use `@scripts/test_body.json`
+- GET requests on Windows need `-d "{}"`
+- `HMAC_SECRET` in `.env` must match the client's
 
 ```bash
 uv run python scripts/gen_hmac.py
@@ -55,7 +55,7 @@ uv run python scripts/gen_hmac.py
 
 ## 4. Domain not allowed
 
-**Triệu chứng:** `403 DOMAIN_NOT_ALLOWED`
+**Symptom:** `403 DOMAIN_NOT_ALLOWED`
 
 **Fix:**
 ```bash
@@ -70,22 +70,22 @@ ON CONFLICT DO NOTHING;
 
 ## 5. Provider 503 / rate limit
 
-**Triệu chứng:** LLM call fail, log báo 503 hoặc rate limit.
+**Symptom:** LLM call fails, log shows 503 or rate limit.
 
 **Fix:**
 ```python
-# src/llm/selector.py — đổi executor sang provider khác
+# src/llm/selector.py — switch the executor to a different provider
 DEFAULT_MODELS = {
-    "executor": ("groq", "llama-3.1-8b-instant"),  # fallback rẻ + nhanh
+    "executor": ("groq", "llama-3.1-8b-instant"),  # cheap + fast fallback
 }
 ```
-Restart app sau khi đổi.
+Restart the app after making the change.
 
 ---
 
 ## 6. Redis connection refused
 
-**Triệu chứng:** `ConnectionRefusedError: [Errno 111]`
+**Symptom:** `ConnectionRefusedError: [Errno 111]`
 
 **Fix:**
 ```bash
@@ -94,11 +94,11 @@ docker compose -f docker/docker-compose.yml --env-file .env up -d
 
 ---
 
-## 7. Tenant hết credit — bị hard stop
+## 7. Tenant out of credit — hard stop triggered
 
-**Triệu chứng:** chat trả về `402` hoặc `InsufficientBalanceError` trong log.
+**Symptom:** chat returns `402` or `InsufficientBalanceError` appears in the log.
 
-**Fix — top-up qua API:**
+**Fix — top up via the API:**
 ```bash
 curl -X POST http://localhost:8000/admin/tenants/<guid>/wallet/topup \
   -H "Content-Type: application/json" \
@@ -107,32 +107,32 @@ curl -X POST http://localhost:8000/admin/tenants/<guid>/wallet/topup \
 
 ---
 
-## 8. Pack không load — fallback generic
+## 8. Pack fails to load — falls back to generic
 
-**Triệu chứng:** tenant dùng sai pack hoặc intent classify sai.
+**Symptom:** the tenant is using the wrong pack, or intent classification is wrong.
 
 **Checklist:**
 ```bash
-# Kiểm tra tenant có được assign pack chưa
+# Check whether the tenant has a pack assigned
 docker exec -it docker-postgres-1 psql -U ai_admin -d ai_db -c "
 SELECT * FROM ai_service.tenant_pack_assignments
 WHERE company_guid = '<guid>';
 "
 
-# Xóa cache Redis nếu pack đang stale
+# Clear the Redis cache if the pack data is stale
 docker exec -it docker-redis-1 redis-cli DEL "pack:tourism@1.0.0"
 ```
 
 ---
 
-## 9. Tool plugin không load khi startup
+## 9. Tool plugin doesn't load on startup
 
-**Triệu chứng:** log startup không có `tool.plugin.registered`.
+**Symptom:** the startup log doesn't show `tool.plugin.registered`.
 
 **Checklist:**
-- Class có kế thừa `BaseTool` không?
-- File có nằm trong `src/tools/plugins/` không?
-- Import có lỗi syntax không?
+- Does the class subclass `BaseTool`?
+- Is the file located in `src/tools/plugins/`?
+- Is there a syntax error in the import?
 
 ```bash
 uv run python -c "from src.tools.loader import ToolPluginLoader; ToolPluginLoader.discover()"
@@ -140,11 +140,11 @@ uv run python -c "from src.tools.loader import ToolPluginLoader; ToolPluginLoade
 
 ---
 
-## 10. Data mất sau reset volume
+## 10. Data lost after resetting the volume
 
-**Triệu chứng:** migration pass nhưng không có data.
+**Symptom:** migrations pass but there's no data.
 
-**Fix — seed lại:**
+**Fix — re-seed:**
 ```bash
 uv run python scripts/seed_pricing.py
 uv run python scripts/seed_test_data.py
@@ -154,14 +154,14 @@ uv run python scripts/seed_tool_definitions.py
 
 ---
 
-## 11. Anomaly alert — tenant tăng đột biến
+## 11. Anomaly alert — sudden spike for a tenant
 
-**Triệu chứng:** `GET /admin/usage/anomalies` trả về tenant có ratio > 3.
+**Symptom:** `GET /admin/usage/anomalies` returns a tenant with ratio > 3.
 
 **Checklist:**
-- Xem usage chi tiết: `GET /admin/tenants/<guid>/usage`
-- Kiểm tra có bị abuse không — xem `audit_log`
-- Tạm thời set `is_hard_stop = TRUE` và balance về 0 nếu cần block:
+- Check usage details: `GET /admin/tenants/<guid>/usage`
+- Check for abuse — review `audit_log`
+- If you need to block the tenant, temporarily set `is_hard_stop = TRUE` and zero out the balance:
 
 ```bash
 docker exec -it docker-postgres-1 psql -U ai_admin -d ai_db -c "
@@ -175,9 +175,9 @@ WHERE company_guid = '<guid>';
 
 ## 12. RLS error — cross-tenant query
 
-**Triệu chứng:** `unrecognized configuration parameter app.current_tenant`
+**Symptom:** `unrecognized configuration parameter app.current_tenant`
 
-**Fix:** Đảm bảo mọi query đều dùng `acquire_with_tenant()`:
+**Fix:** Make sure every query uses `acquire_with_tenant()`:
 ```python
 async with DatabasePool.acquire_with_tenant(company_guid) as conn:
     # query here
@@ -187,9 +187,9 @@ async with DatabasePool.acquire_with_tenant(company_guid) as conn:
 
 ## Rollback plan
 
-| Tình huống | Thời gian | Cách rollback |
+| Situation | Time | How to roll back |
 |---|---|---|
-| Schema mới lỗi | < 5 phút | `uv run alembic downgrade -1` |
-| App crash sau deploy | < 2 phút | `git revert` + redeploy |
-| Wallet system lỗi | < 15 phút | Set `USE_LEGACY_QUOTA=true` trong `.env` |
-| Traffic AI Service lỗi | < 15 phút | Route về n8n cũ qua flag BE Private |
+| New schema is broken | < 5 min | `uv run alembic downgrade -1` |
+| App crashes after deploy | < 2 min | `git revert` + redeploy |
+| Wallet system is broken | < 15 min | Set `USE_LEGACY_QUOTA=true` in `.env` |
+| AI Service traffic is broken | < 15 min | Route back to the old n8n flow via the BE Private feature flag |

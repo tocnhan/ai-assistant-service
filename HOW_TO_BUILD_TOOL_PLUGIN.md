@@ -1,48 +1,48 @@
 # HOW TO BUILD A TOOL PLUGIN
 
-Hướng dẫn tạo tool plugin mới cho AI Assistant Service.  
-Đọc kỹ trước khi code — sai architecture từ đầu sẽ mất công refactor sau.
+A guide for building a new tool plugin for the AI Assistant Service.
+Read this carefully before coding — getting the architecture wrong from the start means a costly refactor later.
 
 ---
 
-## Mục lục
+## Table of Contents
 
-- [Tổng quan kiến trúc](#1-tổng-quan-kiến-trúc)
-- [Luồng hoạt động](#2-luồng-hoạt-động)
-- [Tạo plugin mới — step by step](#3-tạo-plugin-mới--step-by-step)
-- [Ví dụ thực tế](#4-ví-dụ-thực-tế--bookinglookuptool)
-- [Plugin nâng cao — có async init](#5-plugin-nâng-cao--có-async-init)
-- [Các rule bắt buộc](#6-các-rule-bắt-buộc)
-- [Các lỗi thường gặp](#7-các-lỗi-thường-gặp)
-- [Checklist trước khi merge](#8-checklist-trước-khi-merge)
+- [Architecture overview](#1-architecture-overview)
+- [How it works](#2-how-it-works)
+- [Creating a new plugin — step by step](#3-creating-a-new-plugin--step-by-step)
+- [Real-world example](#4-real-world-example--bookinglookuptool)
+- [Advanced plugin — with async init](#5-advanced-plugin--with-async-init)
+- [Mandatory rules](#6-mandatory-rules)
+- [Common pitfalls](#7-common-pitfalls)
+- [Pre-merge checklist](#8-pre-merge-checklist)
 
 ---
 
-## 1. Tổng quan kiến trúc
+## 1. Architecture overview
 
 ```
 src/tools/
-├── base.py                  ← BaseTool, ToolRegistry — KHÔNG sửa
-├── loader.py                ← ToolPluginLoader — KHÔNG sửa
-├── tool_logger.py           ← logging tool call — KHÔNG sửa
+├── base.py                  ← BaseTool, ToolRegistry — DO NOT modify
+├── loader.py                ← ToolPluginLoader — DO NOT modify
+├── tool_logger.py           ← logs tool calls — DO NOT modify
 └── plugins/
     ├── __init__.py
-    ├── http_api_call.py     ← ví dụ plugin có runtime config
-    ├── search_knowledge.py  ← ví dụ plugin với Qdrant
-    └── web_search.py        ← ví dụ plugin gọi external API
+    ├── http_api_call.py     ← example plugin with runtime config
+    ├── search_knowledge.py  ← example plugin using Qdrant
+    └── web_search.py        ← example plugin calling an external API
 ```
 
-**3 nguyên tắc không được vi phạm:**
+**3 principles you must not violate:**
 
-| Nguyên tắc | Giải thích |
+| Principle | Explanation |
 |---|---|
-| Code trên filesystem, config trong DB | `src/tools/plugins/` chứa code, `tool_definitions` chứa metadata, `tenant_tool_configs` chứa config — KHÔNG lưu Python code vào DB |
-| Cùng plugin, khác config | Tenant du lịch và F&B dùng chung `http_api_call` nhưng `base_url` khác nhau — không tạo 2 plugin riêng |
-| `configure()` tạo instance mới | Không mutate instance gốc trong registry — nếu mutate thì config của tenant này sẽ leak sang tenant khác |
+| Code on the filesystem, config in the DB | `src/tools/plugins/` holds the code, `tool_definitions` holds the metadata, `tenant_tool_configs` holds the config — DO NOT store Python code in the DB |
+| Same plugin, different config | A tourism tenant and an F&B tenant both use `http_api_call` but with a different `base_url` — don't create two separate plugins |
+| `configure()` creates a new instance | Don't mutate the original instance in the registry — doing so will leak one tenant's config into another tenant's requests |
 
 ---
 
-## 2. Luồng hoạt động
+## 2. How it works
 
 ### Startup
 
@@ -50,204 +50,204 @@ src/tools/
 uv run uvicorn src.main:app
     └── lifespan()
             └── ToolPluginLoader.discover()
-                    └── scan src/tools/plugins/ (pkgutil.iter_modules)
-                            └── import từng module
-                                    └── tìm class kế thừa BaseTool + có name != ""
+                    └── scans src/tools/plugins/ (pkgutil.iter_modules)
+                            └── imports each module
+                                    └── finds classes that subclass BaseTool and have name != ""
                                             └── ToolRegistry.register(instance)
-                                                    → log: tool.plugin.registered
+                                                    → logs: tool.plugin.registered
 ```
 
-### Mỗi request /chat
+### On each /chat request
 
 ```
 Orchestrator.run_stream()
     └── resolve_for_tenant() → EffectiveConfig.tool_whitelist = ["http_api_call", ...]
             └── ToolConfigService.get_tools_for_tenant(company_guid, whitelist)
-                    └── query tenant_tool_configs từ DB (RLS lọc theo tenant)
-                            └── với mỗi tool trong whitelist:
-                                    ├── is_enabled = null  → dùng default instance
-                                    ├── is_enabled = false → bỏ qua, agent không thấy
+                    └── queries tenant_tool_configs from the DB (RLS-filtered by tenant)
+                            └── for each tool in the whitelist:
+                                    ├── is_enabled = null  → use the default instance
+                                    ├── is_enabled = false → skip — the agent won't see it
                                     └── is_enabled = true  → ToolRegistry.get_configured(name, config)
                                                                     └── tool.configure(config)
-                                                                            → instance mới với config của tenant
-                    └── trả về list[BaseTool] đã configured
+                                                                            → a new instance configured for this tenant
+                    └── returns a list[BaseTool] that have been configured
             └── AgentRegistry.get_executor(..., tools=tools)
-                    └── LLM dùng tools.to_mcp_spec() để biết cách gọi
+                    └── the LLM uses tools.to_mcp_spec() to learn how to call them
 ```
 
 ---
 
-## 3. Tạo plugin mới — step by step
+## 3. Creating a new plugin — step by step
 
-### Bước 1: Tạo file plugin
+### Step 1: Create the plugin file
 
-Tạo file mới trong `src/tools/plugins/`:
+Create a new file in `src/tools/plugins/`:
 
 ```
-src/tools/plugins/ten_tool_cua_ban.py
+src/tools/plugins/your_tool_name.py
 ```
 
-Đặt tên file theo chức năng, dùng snake_case.
+Name the file according to its function, using snake_case.
 
 ---
 
-### Bước 2: Viết class plugin
+### Step 2: Write the plugin class
 
 ```python
-# src/tools/plugins/ten_tool_cua_ban.py
+# src/tools/plugins/your_tool_name.py
 from src.tools.base import BaseTool
 
 
-class TenToolCuaBanTool(BaseTool):
+class YourToolNameTool(BaseTool):
 
-    # ── 1. Metadata — LLM đọc để biết khi nào gọi tool này ──────────────────
+    # ── 1. Metadata — the LLM reads this to decide when to call the tool ────
 
-    name = "ten_tool_cua_ban"
-    # name phải unique trong toàn hệ thống
-    # phải khớp với tool_name trong bảng tool_definitions
+    name = "your_tool_name"
+    # name must be unique across the whole system
+    # must match tool_name in the tool_definitions table
 
     description = (
-        "Mô tả ngắn gọn, rõ ràng tool làm gì. "
-        "LLM đọc cái này để quyết định có nên gọi tool không. "
-        "Càng cụ thể càng tốt — ví dụ: 'Tra cứu trạng thái đơn hàng theo mã đơn. "
-        "Dùng khi khách hỏi đơn hàng của họ đang ở đâu.'"
+        "A short, clear description of what the tool does. "
+        "The LLM reads this to decide whether to call the tool. "
+        "The more specific, the better — e.g. 'Looks up an order's status by order code. "
+        "Use this when the customer asks where their order is.'"
     )
 
-    # JSON Schema của INPUT — LLM dùng để build payload khi gọi tool
+    # JSON Schema of the INPUT — the LLM uses this to build the call payload
     input_schema = {
         "type": "object",
         "properties": {
-            "param_bat_buoc": {
+            "required_param": {
                 "type": "string",
-                "description": "Mô tả rõ param này là gì, LLM sẽ điền gì vào đây",
+                "description": "Describe clearly what this param is and what the LLM should fill in",
             },
-            "param_optional": {
+            "optional_param": {
                 "type": "integer",
-                "description": "Mô tả param optional",
+                "description": "Description of the optional param",
                 "default": 10,
             },
         },
-        "required": ["param_bat_buoc"],  # chỉ list param thực sự bắt buộc
+        "required": ["required_param"],  # only list params that are truly required
     }
 
-    # ── 2. Runtime config — giá trị mặc định, sẽ bị override bởi configure() ─
+    # ── 2. Runtime config — default values, overridden by configure() ───────
 
     some_api_url: str = ""
     some_api_key: str = ""
     timeout: int = 10
 
-    # ── 3. configure() — inject config per-tenant từ DB ──────────────────────
+    # ── 3. configure() — injects per-tenant config from the DB ──────────────
 
-    def configure(self, config: dict) -> "TenToolCuaBanTool":
+    def configure(self, config: dict) -> "YourToolNameTool":
         """
-        Nhận config từ tenant_tool_configs.config trong DB.
+        Receives config from tenant_tool_configs.config in the DB.
 
-        QUAN TRỌNG:
-        - Tạo instance MỚI — không mutate self
-        - Nếu mutate self thì config tenant A sẽ leak sang tenant B
-        - config dict đến từ DB, không validate trước — dùng .get() với default
+        IMPORTANT:
+        - Create a NEW instance — do not mutate self
+        - Mutating self would leak tenant A's config into tenant B's requests
+        - The config dict comes from the DB and is not pre-validated — use .get() with defaults
 
         Args:
-            config: dict từ tenant_tool_configs.config, ví dụ:
+            config: dict from tenant_tool_configs.config, e.g.:
                     {"some_api_url": "https://api.example.com", "timeout": 15}
 
         Returns:
-            Instance mới đã được configured
+            A new instance with the config applied
         """
-        instance = TenToolCuaBanTool()
+        instance = YourToolNameTool()
         instance.some_api_url = config.get("some_api_url", "").rstrip("/")
         instance.some_api_key = config.get("some_api_key", "")
         instance.timeout = config.get("timeout", 10)
         return instance
 
-    # ── 4. _run() — logic thật của tool ──────────────────────────────────────
+    # ── 4. _run() — the tool's actual logic ──────────────────────────────────
 
     async def _run(
         self,
-        param_bat_buoc: str,
-        param_optional: int = 10,
-        tenant_id: str = None,   # inject từ middleware nếu cần, KHÔNG để LLM tự sinh
+        required_param: str,
+        optional_param: int = 10,
+        tenant_id: str = None,   # injected from the middleware if needed — never let the LLM fill this in
     ) -> dict:
         """
-        Logic thật viết ở đây.
+        Write the real logic here.
 
         Rules:
-        - LUÔN trả về dict
-        - KHÔNG raise exception nếu có thể tránh — trả về {"error": "..."} thay thế
-        - Kiểm tra config hợp lệ trước khi dùng
-        - tenant_id nếu cần thì inject từ middleware, không để LLM tự điền
+        - ALWAYS return a dict
+        - DO NOT raise exceptions when avoidable — return {"error": "..."} instead
+        - Validate the config before using it
+        - If you need tenant_id, inject it from the middleware — don't let the LLM fill it in
         """
-        # Kiểm tra config trước
+        # Validate config first
         if not self.some_api_url:
             return {
-                "error": "ten_tool_cua_ban chưa được cấu hình some_api_url cho tenant này.",
+                "error": "your_tool_name has not been configured with some_api_url for this tenant.",
                 "success": False,
             }
 
-        # ... logic thật ...
+        # ... real logic here ...
 
         return {
-            "result": f"Kết quả xử lý {param_bat_buoc}",
+            "result": f"Processed result for {required_param}",
             "success": True,
         }
 ```
 
 ---
 
-### Bước 3: Seed `tool_definitions` vào DB
+### Step 3: Seed `tool_definitions` into the DB
 
-Mở `scripts/seed_tool_definitions.py`, thêm entry mới vào list `TOOL_DEFINITIONS`:
+Open `scripts/seed_tool_definitions.py` and add a new entry to the `TOOL_DEFINITIONS` list:
 
 ```python
 {
-    "tool_name": "ten_tool_cua_ban",          # phải khớp BaseTool.name
-    "display_name": "Tên hiển thị cho admin", # admin đọc trên dashboard
-    "description": "Mô tả đầy đủ hơn cho admin, không phải cho LLM.",
-    "plugin_class": "src.tools.plugins.ten_tool_cua_ban.TenToolCuaBanTool",
+    "tool_name": "your_tool_name",             # must match BaseTool.name
+    "display_name": "Display name for admin",  # shown to admins on the dashboard
+    "description": "A fuller description for admins, not for the LLM.",
+    "plugin_class": "src.tools.plugins.your_tool_name.YourToolNameTool",
 
-    # config_schema — JSON Schema validate config của admin trước khi lưu DB
-    # đây là schema của config dict truyền vào configure()
+    # config_schema — JSON Schema used to validate the admin's config before saving to the DB
+    # this is the schema of the config dict passed into configure()
     "config_schema": {
         "type": "object",
         "required": ["some_api_url"],
         "properties": {
             "some_api_url": {
                 "type": "string",
-                "description": "Base URL của API, ví dụ: https://api.example.com",
+                "description": "API base URL, e.g. https://api.example.com",
             },
             "some_api_key": {
                 "type": "string",
-                "description": "API key để authenticate",
+                "description": "API key for authentication",
             },
             "timeout": {
                 "type": "integer",
                 "default": 10,
-                "description": "Timeout tính bằng giây",
+                "description": "Timeout in seconds",
             },
         },
     },
 
-    # input_schema — copy từ class luôn cho nhất quán
-    # đây là schema LLM dùng để build payload khi gọi tool
+    # input_schema — copy from the class for consistency
+    # this is the schema the LLM uses to build the call payload
     "input_schema": {
         "type": "object",
-        "required": ["param_bat_buoc"],
+        "required": ["required_param"],
         "properties": {
-            "param_bat_buoc": {
+            "required_param": {
                 "type": "string",
-                "description": "Mô tả rõ ràng",
+                "description": "Clear description",
             },
-            "param_optional": {
+            "optional_param": {
                 "type": "integer",
                 "default": 10,
-                "description": "Mô tả param optional",
+                "description": "Description of the optional param",
             },
         },
     },
 },
 ```
 
-Chạy seed:
+Run the seed:
 
 ```bash
 uv run python scripts/seed_tool_definitions.py
@@ -255,50 +255,50 @@ uv run python scripts/seed_tool_definitions.py
 
 ---
 
-### Bước 4: Thêm tool vào pack whitelist
+### Step 4: Add the tool to a pack's whitelist
 
-Mở `scripts/seed_packs.py`, tìm pack muốn enable tool, thêm vào `tool_whitelist`:
+Open `scripts/seed_packs.py`, find the pack you want to enable the tool for, and add it to `tool_whitelist`:
 
 ```python
 "tool_whitelist": [
     "search_knowledge",
     "http_api_call",
-    "ten_tool_cua_ban",    # ← thêm vào đây
+    "your_tool_name",    # ← add it here
 ]
 ```
 
-Chạy lại seed pack:
+Re-run the pack seed:
 
 ```bash
 uv run python scripts/seed_packs.py
 ```
 
-> Nếu tenant đang dùng pack này — xóa Redis cache của pack:
+> If a tenant is already using this pack — clear its Redis cache:
 > ```bash
 > docker exec -it docker-redis-1 redis-cli DEL "pack:tourism@1.0.0"
 > ```
 
 ---
 
-### Bước 5: Enable tool cho tenant qua API
+### Step 5: Enable the tool for a tenant via the API
 
-Sửa `scripts/test_body.json`:
+Edit `scripts/test_body.json`:
 
 ```json
 {"is_enabled": true, "config": {"some_api_url": "https://api.example.com", "timeout": 15}}
 ```
 
-Gen HMAC:
+Generate the HMAC:
 
 ```bash
 uv run python scripts/gen_hmac.py
 ```
 
-Gọi PUT endpoint:
+Call the PUT endpoint:
 
 ```bash
 # Windows
-curl.exe -X PUT "http://localhost:8000/admin/tenants/<company_guid>/tools/ten_tool_cua_ban" `
+curl.exe -X PUT "http://localhost:8000/admin/tenants/<company_guid>/tools/your_tool_name" `
   -H "Content-Type: application/json" `
   -H "X-Company-GUID: <company_guid>" `
   -H "X-User-GUID: <user_guid>" `
@@ -308,7 +308,7 @@ curl.exe -X PUT "http://localhost:8000/admin/tenants/<company_guid>/tools/ten_to
   -d "@scripts/test_body.json"
 
 # Linux/Mac
-curl -X PUT "http://localhost:8000/admin/tenants/<company_guid>/tools/ten_tool_cua_ban" \
+curl -X PUT "http://localhost:8000/admin/tenants/<company_guid>/tools/your_tool_name" \
   -H "Content-Type: application/json" \
   ... \
   -d '@scripts/test_body.json'
@@ -316,41 +316,41 @@ curl -X PUT "http://localhost:8000/admin/tenants/<company_guid>/tools/ten_tool_c
 
 ---
 
-### Bước 6: Restart app
+### Step 6: Restart the app
 
 ```bash
 uv run uvicorn src.main:app --reload
 ```
 
-`ToolPluginLoader.discover()` tự scan và register plugin mới khi startup — **không cần import thủ công ở đâu cả**.
+`ToolPluginLoader.discover()` automatically scans and registers the new plugin at startup — **no manual import needed anywhere**.
 
-Kiểm tra log startup:
+Check the startup log:
 
 ```
-tool.plugin.registered  tool=ten_tool_cua_ban  module=src.tools.plugins.ten_tool_cua_ban
+tool.plugin.registered  tool=your_tool_name  module=src.tools.plugins.your_tool_name
 tool.plugin.discover_done  total=4
 ```
 
 ---
 
-### Bước 7: Verify
+### Step 7: Verify
 
 ```bash
-# Kiểm tra tool xuất hiện trong danh sách
+# Check the tool appears in the list
 curl.exe -X GET "http://localhost:8000/admin/tools" ...
 
-# Kiểm tra tool đã enable cho tenant
+# Check the tool is enabled for the tenant
 curl.exe -X GET "http://localhost:8000/admin/tenants/<guid>/tools" ...
 
-# Kiểm tra MCP spec — chỉ show tool đã enable
+# Check the MCP spec — only enabled tools should show
 curl.exe -X GET "http://localhost:8000/admin/tenants/<guid>/tools/mcp-spec" ...
 ```
 
 ---
 
-## 4. Ví dụ thực tế — BookingLookupTool
+## 4. Real-world example — BookingLookupTool
 
-Tool tra cứu trạng thái booking theo mã đặt chỗ cho vertical du lịch:
+A tool that looks up booking status by booking code, for the tourism vertical:
 
 ```python
 # src/tools/plugins/booking_lookup.py
@@ -361,16 +361,16 @@ from src.tools.base import BaseTool
 class BookingLookupTool(BaseTool):
     name = "booking_lookup"
     description = (
-        "Tra cứu thông tin booking theo mã đặt chỗ. "
-        "Dùng khi khách hỏi về trạng thái booking, ngày check-in, "
-        "hoặc thông tin phòng của họ."
+        "Looks up booking information by booking code. "
+        "Use this when the customer asks about their booking status, "
+        "check-in date, or room information."
     )
     input_schema = {
         "type": "object",
         "properties": {
             "booking_code": {
                 "type": "string",
-                "description": "Mã đặt chỗ của khách, ví dụ: BK-2026-001",
+                "description": "The customer's booking code, e.g. BK-2026-001",
             },
         },
         "required": ["booking_code"],
@@ -390,7 +390,7 @@ class BookingLookupTool(BaseTool):
     async def _run(self, booking_code: str, tenant_id: str = None) -> dict:
         if not self.api_base_url:
             return {
-                "error": "booking_lookup chưa được cấu hình api_base_url.",
+                "error": "booking_lookup has not been configured with api_base_url.",
                 "success": False,
             }
 
@@ -398,7 +398,7 @@ class BookingLookupTool(BaseTool):
         if self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
         if tenant_id:
-            headers["X-Tenant-Id"] = tenant_id  # inject từ middleware
+            headers["X-Tenant-Id"] = tenant_id  # injected from the middleware
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
@@ -410,7 +410,7 @@ class BookingLookupTool(BaseTool):
                 if response.status_code == 404:
                     return {
                         "found": False,
-                        "message": f"Không tìm thấy booking {booking_code}.",
+                        "message": f"Booking {booking_code} was not found.",
                         "success": True,
                     }
 
@@ -429,26 +429,26 @@ class BookingLookupTool(BaseTool):
                 }
 
             except httpx.TimeoutException:
-                return {"error": "API timeout, vui lòng thử lại.", "success": False}
+                return {"error": "API timeout, please try again.", "success": False}
             except httpx.HTTPStatusError as e:
-                return {"error": f"API lỗi: {e.response.status_code}", "success": False}
+                return {"error": f"API error: {e.response.status_code}", "success": False}
 ```
 
-Seed vào DB:
+Seed it into the DB:
 
 ```python
-# Thêm vào TOOL_DEFINITIONS trong scripts/seed_tool_definitions.py
+# Add to TOOL_DEFINITIONS in scripts/seed_tool_definitions.py
 {
     "tool_name": "booking_lookup",
     "display_name": "Booking Lookup",
-    "description": "Tra cứu thông tin booking theo mã đặt chỗ.",
+    "description": "Looks up booking information by booking code.",
     "plugin_class": "src.tools.plugins.booking_lookup.BookingLookupTool",
     "config_schema": {
         "type": "object",
         "required": ["api_base_url"],
         "properties": {
-            "api_base_url": {"type": "string", "description": "Base URL của booking API"},
-            "api_token":    {"type": "string", "description": "Bearer token để authenticate"},
+            "api_base_url": {"type": "string", "description": "Base URL of the booking API"},
+            "api_token":    {"type": "string", "description": "Bearer token for authentication"},
             "timeout":      {"type": "integer", "default": 10},
         },
     },
@@ -456,7 +456,7 @@ Seed vào DB:
         "type": "object",
         "required": ["booking_code"],
         "properties": {
-            "booking_code": {"type": "string", "description": "Mã đặt chỗ"},
+            "booking_code": {"type": "string", "description": "Booking code"},
         },
     },
 },
@@ -464,9 +464,9 @@ Seed vào DB:
 
 ---
 
-## 5. Plugin nâng cao — có async init
+## 5. Advanced plugin — with async init
 
-Nếu plugin cần khởi tạo async (ví dụ: connect DB, load model), override method `async_init()`:
+If a plugin needs async initialization (e.g. connecting to a DB, loading a model), override the `async_init()` method:
 
 ```python
 # src/tools/plugins/sql_query_safe.py
@@ -476,20 +476,20 @@ from src.tools.base import BaseTool
 
 class SqlQuerySafeTool(BaseTool):
     name = "sql_query_safe"
-    description = "Truy vấn dữ liệu read-only từ DB của tenant. Chỉ cho phép SELECT."
+    description = "Runs read-only queries against the tenant's DB. SELECT only."
     input_schema = {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Câu SQL SELECT muốn truy vấn, ví dụ: SELECT * FROM orders LIMIT 10",
+                "description": "The SELECT query to run, e.g. SELECT * FROM orders LIMIT 10",
             },
         },
         "required": ["query"],
     }
 
     db_url: str = ""
-    _pool: asyncpg.Pool = None   # không serialize vào config
+    _pool: asyncpg.Pool = None   # not serialized into config
 
     def configure(self, config: dict) -> "SqlQuerySafeTool":
         instance = SqlQuerySafeTool()
@@ -497,16 +497,16 @@ class SqlQuerySafeTool(BaseTool):
         return instance
 
     async def _run(self, query: str) -> dict:
-        # Chỉ cho phép SELECT — bảo vệ khỏi SQL injection destructive
+        # Only allow SELECT — protects against destructive SQL injection
         query_stripped = query.strip().upper()
         if not query_stripped.startswith("SELECT"):
             return {
-                "error": "Chỉ cho phép câu truy vấn SELECT.",
+                "error": "Only SELECT queries are allowed.",
                 "success": False,
             }
 
         if not self.db_url:
-            return {"error": "sql_query_safe chưa được cấu hình db_url.", "success": False}
+            return {"error": "sql_query_safe has not been configured with db_url.", "success": False}
 
         try:
             conn = await asyncpg.connect(self.db_url)
@@ -523,151 +523,151 @@ class SqlQuerySafeTool(BaseTool):
 
 ---
 
-## 6. Các rule bắt buộc
+## 6. Mandatory rules
 
-### Rule 1 — `configure()` PHẢI tạo instance mới
+### Rule 1 — `configure()` MUST create a new instance
 
 ```python
-# ❌ SAI — mutate instance gốc trong registry
-# Config tenant A sẽ leak sang tenant B ở request tiếp theo
+# ❌ WRONG — mutates the original instance in the registry
+# Tenant A's config will leak into tenant B's next request
 def configure(self, config: dict) -> "MyTool":
     self.base_url = config.get("base_url", "")
     return self
 
-# ✅ ĐÚNG — tạo instance mới
+# ✅ CORRECT — creates a new instance
 def configure(self, config: dict) -> "MyTool":
     instance = MyTool()
     instance.base_url = config.get("base_url", "")
     return instance
 ```
 
-### Rule 2 — `_run()` LUÔN trả về dict
+### Rule 2 — `_run()` ALWAYS returns a dict
 
 ```python
-# ❌ SAI
+# ❌ WRONG
 async def _run(self, query: str):
-    return "kết quả string"   # LLM không parse được
+    return "result string"   # the LLM can't parse this
 
 async def _run(self, query: str):
-    raise ValueError("lỗi")  # crash agent
+    raise ValueError("error")  # crashes the agent
 
-# ✅ ĐÚNG
+# ✅ CORRECT
 async def _run(self, query: str) -> dict:
-    return {"result": "kết quả", "success": True}
+    return {"result": "the result", "success": True}
 
 async def _run(self, query: str) -> dict:
-    return {"error": "lỗi gì đó", "success": False}
+    return {"error": "something went wrong", "success": False}
 ```
 
-### Rule 3 — KHÔNG hardcode secret trong plugin
+### Rule 3 — DO NOT hardcode secrets in the plugin
 
 ```python
-# ❌ SAI
+# ❌ WRONG
 class MyTool(BaseTool):
-    api_key: str = "sk-hardcoded-key-123"   # lộ key trong code
+    api_key: str = "sk-hardcoded-key-123"   # leaks the key in the code
 
-# ✅ ĐÚNG — lấy từ config dict, admin set qua PUT endpoint
+# ✅ CORRECT — read it from the config dict, set by the admin via the PUT endpoint
 def configure(self, config: dict) -> "MyTool":
     instance = MyTool()
-    instance.api_key = config.get("api_key", "")  # từ tenant_tool_configs.config
+    instance.api_key = config.get("api_key", "")  # from tenant_tool_configs.config
     return instance
 ```
 
-### Rule 4 — `tenant_id` inject từ middleware, không để LLM điền
+### Rule 4 — `tenant_id` is injected from the middleware, never filled in by the LLM
 
 ```python
-# ❌ SAI — LLM có thể điền tenant_id giả
+# ❌ WRONG — the LLM could fill in a fake tenant_id
 input_schema = {
     "properties": {
-        "tenant_id": {"type": "string"},  # đừng expose cái này cho LLM
+        "tenant_id": {"type": "string"},  # don't expose this to the LLM
     }
 }
 
-# ✅ ĐÚNG — nhận tenant_id như parameter bình thường nhưng KHÔNG khai báo trong input_schema
+# ✅ CORRECT — accept tenant_id as a normal parameter but DO NOT declare it in input_schema
 async def _run(self, query: str, tenant_id: str = None) -> dict:
-    # tenant_id được inject từ middleware, không phải từ LLM
+    # tenant_id is injected from the middleware, not from the LLM
     headers = {"X-Tenant-Id": tenant_id} if tenant_id else {}
 ```
 
-### Rule 5 — `name` phải unique và khớp với DB
+### Rule 5 — `name` must be unique and match the DB
 
 ```python
-# Tool name trong class
+# Tool name in the class
 class MyTool(BaseTool):
-    name = "my_tool"   # ← phải khớp
+    name = "my_tool"   # ← must match
 
-# tool_name trong tool_definitions
+# tool_name in tool_definitions
 INSERT INTO ai_service.tool_definitions (tool_name, ...)
-VALUES ('my_tool', ...)  # ← phải khớp
+VALUES ('my_tool', ...)  # ← must match
 
-# tool_name trong pack whitelist
-"tool_whitelist": ["my_tool"]  # ← phải khớp
+# tool_name in the pack whitelist
+"tool_whitelist": ["my_tool"]  # ← must match
 ```
 
 ---
 
-## 7. Các lỗi thường gặp
+## 7. Common pitfalls
 
-### Tool không xuất hiện sau khi tạo
+### The tool doesn't show up after creation
 
-Kiểm tra log startup — nếu không thấy `tool.plugin.registered`:
+Check the startup log — if you don't see `tool.plugin.registered`:
 
 ```bash
-# Chạy app và xem log
+# Run the app and check the log
 uv run uvicorn src.main:app --reload
 ```
 
-Nguyên nhân thường gặp:
-- Class không kế thừa `BaseTool`
-- `name` bị để rỗng `""`
-- File không nằm trong `src/tools/plugins/`
-- Lỗi import trong file — kiểm tra syntax
+Common causes:
+- The class doesn't subclass `BaseTool`
+- `name` was left as an empty string `""`
+- The file isn't located in `src/tools/plugins/`
+- An import error in the file — check the syntax
 
 ```bash
-# Test import thủ công
-uv run python -c "from src.tools.plugins.ten_tool import TenTool; print(TenTool.name)"
+# Manually test the import
+uv run python -c "from src.tools.plugins.your_tool import YourTool; print(YourTool.name)"
 ```
 
 ---
 
-### Tool không xuất hiện trong MCP spec
+### The tool doesn't appear in the MCP spec
 
 ```bash
-# Kiểm tra tool đã enable chưa
+# Check whether the tool is enabled
 curl GET /admin/tenants/<guid>/tools
 ```
 
-- `is_enabled: null` — chưa config → gọi PUT để enable
-- `is_enabled: false` — bị disable → gọi PUT với `is_enabled: true`
-- Tool không có trong list → `tool_name` trong pack `tool_whitelist` chưa có
+- `is_enabled: null` — not configured yet → call PUT to enable it
+- `is_enabled: false` — disabled → call PUT with `is_enabled: true`
+- The tool isn't in the list at all → `tool_name` is missing from the pack's `tool_whitelist`
 
 ---
 
-### `configure()` không có tác dụng
+### `configure()` doesn't seem to take effect
 
-Kiểm tra xem có đang mutate `self` không:
+Check whether you're mutating `self`:
 
 ```python
-# Debug — in ra id của instance
+# Debug — print the instance ids
 def configure(self, config: dict) -> "MyTool":
     instance = MyTool()
     print(f"registry instance: {id(self)}, new instance: {id(instance)}")
-    # Phải là 2 id khác nhau
+    # These must be 2 different ids
     instance.base_url = config.get("base_url", "")
     return instance
 ```
 
 ---
 
-### Signature HMAC invalid khi test PUT endpoint
+### HMAC signature invalid when testing the PUT endpoint
 
-Body phải là 1 dòng, không có newline — sửa `scripts/test_body.json`:
+The body must be a single line, with no newlines — fix `scripts/test_body.json`:
 
 ```json
 {"is_enabled": true, "config": {"some_api_url": "https://api.example.com"}}
 ```
 
-Rồi gen lại HMAC:
+Then regenerate the HMAC:
 
 ```bash
 uv run python scripts/gen_hmac.py
@@ -675,9 +675,9 @@ uv run python scripts/gen_hmac.py
 
 ---
 
-### RLS error khi tool query DB
+### RLS error when the tool queries the DB
 
-Tool tự query DB của AI service cần set tenant context trong transaction:
+A tool querying the AI service's own DB needs to set the tenant context within the transaction:
 
 ```python
 async def _run(self, ...) -> dict:
@@ -693,45 +693,45 @@ async def _run(self, ...) -> dict:
 
 ---
 
-### Tool bị register 2 lần
+### The tool gets registered twice
 
-Nếu thấy log `tool.plugin.registered` 2 lần cho cùng 1 tool — kiểm tra xem có file cũ nào trong `src/tools/` (không phải `plugins/`) đang import và register không.
+If you see the `tool.plugin.registered` log line twice for the same tool — check whether some old file in `src/tools/` (not `plugins/`) is importing and registering it.
 
-Xóa hoặc comment dòng register trong file cũ:
+Remove or comment out the registration line in the old file:
 
 ```python
-# src/tools/search_tool.py — file cũ
-# ToolRegistry.register(SearchTool())  ← comment hoặc xóa dòng này
+# src/tools/search_tool.py — old file
+# ToolRegistry.register(SearchTool())  ← comment out or delete this line
 ```
 
 ---
 
-## 8. Checklist trước khi merge
+## 8. Pre-merge checklist
 
 **Code:**
-- [ ] Class kế thừa `BaseTool`, có `name`, `description`, `input_schema`
-- [ ] `name` unique, không trùng với tool nào đã có
-- [ ] `configure()` tạo instance mới, không mutate `self`
-- [ ] `_run()` luôn trả về `dict`
-- [ ] `_run()` xử lý trường hợp config rỗng — trả về `{"error": "..."}` thay vì crash
-- [ ] Không hardcode secret, API key trong code
-- [ ] `tenant_id` không khai báo trong `input_schema`
+- [ ] The class subclasses `BaseTool` and has `name`, `description`, `input_schema`
+- [ ] `name` is unique and doesn't clash with an existing tool
+- [ ] `configure()` creates a new instance and doesn't mutate `self`
+- [ ] `_run()` always returns a `dict`
+- [ ] `_run()` handles an empty config gracefully — returns `{"error": "..."}` instead of crashing
+- [ ] No hardcoded secrets or API keys in the code
+- [ ] `tenant_id` is not declared in `input_schema`
 
 **DB:**
-- [ ] Đã seed `tool_definitions` — `uv run python scripts/seed_tool_definitions.py`
-- [ ] `tool_name` trong DB khớp chính xác với `BaseTool.name`
-- [ ] `plugin_class` đúng đường dẫn import
+- [ ] `tool_definitions` has been seeded — `uv run python scripts/seed_tool_definitions.py`
+- [ ] `tool_name` in the DB exactly matches `BaseTool.name`
+- [ ] `plugin_class` has the correct import path
 
 **Pack:**
-- [ ] Đã thêm `tool_name` vào `tool_whitelist` của pack liên quan
-- [ ] Đã chạy lại `uv run python scripts/seed_packs.py`
-- [ ] Đã clear Redis cache của pack nếu cần
+- [ ] `tool_name` has been added to the relevant pack's `tool_whitelist`
+- [ ] `uv run python scripts/seed_packs.py` has been re-run
+- [ ] The pack's Redis cache has been cleared if needed
 
-**Test:**
-- [ ] Đã test với ít nhất 1 tenant enable tool → tool xuất hiện trong MCP spec
-- [ ] Đã test với 1 tenant không enable → tool không xuất hiện
-- [ ] Đã test `_run()` với config hợp lệ → trả về kết quả đúng
-- [ ] Đã test `_run()` với config rỗng → trả về `{"error": "..."}`, không crash
+**Tests:**
+- [ ] Tested with at least 1 tenant that has the tool enabled → tool appears in the MCP spec
+- [ ] Tested with 1 tenant that doesn't have it enabled → tool does not appear
+- [ ] Tested `_run()` with a valid config → returns the correct result
+- [ ] Tested `_run()` with an empty config → returns `{"error": "..."}`, doesn't crash
 
 **Docs:**
-- [ ] Đã cập nhật `README.md` phần Tool Plugin System nếu cần
+- [ ] `README.md`'s Tool Plugin System section has been updated if needed
